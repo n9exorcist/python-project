@@ -11,7 +11,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 load_dotenv()
 
 gemini_key = os.getenv("GEMINI_API_KEY")
-DATA_PATH = "./data" 
+DATA_PATH = "./langchain project/data"
 
 def load_local_documents():
     loaded_docs = []
@@ -85,7 +85,7 @@ try:
             google_api_key=gemini_key
         )
 
-        batch_size = 50 # Google Free Tier allows 100 per minute
+        batch_size = 25 # Google Free Tier allows 100 per minute
         vector_db = None
 
         for i in range(0, total_chunks, batch_size):
@@ -101,8 +101,8 @@ try:
             
             # Pause to reset the Google API quota (100 requests/min)
             if i + batch_size < total_chunks:
-                print("Waiting 25 seconds for rate limit to reset...")
-                time.sleep(25) 
+                print("Waiting 35 seconds for rate limit to reset...")
+                time.sleep(35) 
 
         # Step 4: Save the Index
         vector_db.save_local("faiss_index")
