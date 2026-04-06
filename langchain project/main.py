@@ -55,7 +55,7 @@ vector_db = FAISS.load_local(
     embeddings, 
     allow_dangerous_deserialization=True
 )
-retriever = vector_db.as_retriever(search_kwargs={"k": 3})
+retriever = vector_db.as_retriever(search_kwargs={"k": 10})
 
 # --- 2. Graph State & Nodes ---
 
@@ -91,18 +91,29 @@ async def generate_node(state):
     print("--- GENERATING RESPONSE ---")
     context = state["context"]
     
-    # We create a specific prompt that combines history and retrieved context
-    prompt = f"""Use the following context to answer the user question. 
-    If the context is from a search result, provide specific dates and events.
+    # SAFE ACCESS: Check if message is an object or a tuple/string
+    last_message = state["messages"][-1]
+    if hasattr(last_message, 'content'):
+        question = last_message.content
+    elif isinstance(last_message, tuple):
+        question = last_message[1]  # Get the text from ("user", "text")
+    else:
+        question = str(last_message)
     
+    prompt = f"""You are an expert Financial Astrologer. 
+    Use the provided "Parth Prophecies" context to answer the user's question. 
+    
+    If the context mentions months, dates, or planetary movements (like Nakshatras), explain them clearly. 
+    If you don't find the specific month in the context, say "I don't see April in my notes," but then summarize what you DO see for the surrounding months.
+
     Context: {context}
-    """
+    Question: {question}"""
     
     # We insert the system prompt at the beginning of the message history
     messages_with_context = [("system", prompt)] + state["messages"]
     
     response = await llm.ainvoke(messages_with_context)
-    return {"messages": [response]} # Return as list to append via operator.add
+    return {"messages": [response]}
 
 # --- 3. Graph Construction & Routing ---
 
