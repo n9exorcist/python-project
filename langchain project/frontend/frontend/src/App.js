@@ -1,16 +1,44 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import {
   addUserMessage,
   addAiPlaceholder,
   appendChunkToLastMessage,
   finishGeneration,
+  setChatHistory,
 } from "./store/chatSlice.js";
 
 function App() {
   const [input, setInput] = useState("");
   const { messages, isGenerating } = useSelector((state) => state.chat);
   const dispatch = useDispatch();
+
+  // 2. ADD IT HERE (Before handleSend)
+  // This runs exactly once when the component first "mounts" (loads)
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const response = await fetch("http://localhost:8000/chat/history");
+        const data = await response.json();
+
+        if (data.history && Array.isArray(data.history)) {
+          const formattedHistory = data.history.map((msg) => {
+            // Check for 'human' or 'user' type, otherwise assume AI
+            const isUser = msg.type === "human" || msg.role === "user";
+            return {
+              role: isUser ? "user" : "ai",
+              text: msg.content || msg.text || "",
+            };
+          });
+
+          dispatch(setChatHistory(formattedHistory));
+        }
+      } catch (err) {
+        console.error("Failed to hydrate chat history:", err);
+      }
+    };
+    fetchHistory();
+  }, [dispatch]);
 
   const handleSend = async (e) => {
     e.preventDefault();

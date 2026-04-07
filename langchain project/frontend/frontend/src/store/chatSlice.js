@@ -7,6 +7,10 @@ const chatSlice = createSlice({
     isGenerating: false,
   },
   reducers: {
+    // NEW: Handles the data coming from your /chat/history API
+    setChatHistory: (state, action) => {
+      state.messages = action.payload;
+    },
     addUserMessage: (state, action) => {
       state.messages.push({ role: "user", text: action.payload });
     },
@@ -27,6 +31,7 @@ const chatSlice = createSlice({
 });
 
 export const {
+  setChatHistory,
   addUserMessage,
   addAiPlaceholder,
   appendChunkToLastMessage,
