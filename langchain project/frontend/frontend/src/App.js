@@ -21,17 +21,11 @@ function App() {
         const response = await fetch("http://localhost:8000/chat/history");
         const data = await response.json();
 
+        // data.history now contains [{role: 'user', text: '...'}, ...]
         if (data.history && Array.isArray(data.history)) {
-          const formattedHistory = data.history.map((msg) => {
-            // Check for 'human' or 'user' type, otherwise assume AI
-            const isUser = msg.type === "human" || msg.role === "user";
-            return {
-              role: isUser ? "user" : "ai",
-              text: msg.content || msg.text || "",
-            };
-          });
-
-          dispatch(setChatHistory(formattedHistory));
+          // Since the backend already formatted the keys as 'role' and 'text',
+          // we can pass the array directly to Redux
+          dispatch(setChatHistory(data.history));
         }
       } catch (err) {
         console.error("Failed to hydrate chat history:", err);
