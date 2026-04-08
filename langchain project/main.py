@@ -15,6 +15,7 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+
 # 1. LOAD ENVIRONMENT
 load_dotenv(find_dotenv())
 
@@ -57,6 +58,7 @@ class GraphState(TypedDict):
     messages: Annotated[list, operator.add]
     context: str
 
+
 def retrieve_node(state):
     print("--- RETRIEVING FROM LOCAL DB ---")
     last_message = state["messages"][-1]
@@ -69,6 +71,7 @@ def retrieve_node(state):
     context_str = "\n".join([d.page_content for d in docs])
     return {"context": context_str}
 
+
 def web_search_node(state):
     print("--- SEARCHING THE WEB ---")
     last_message = state["messages"][-1]
@@ -76,6 +79,7 @@ def web_search_node(state):
     search_results = web_search_tool.invoke({"query": query})
     context_str = "\n".join([res["content"] for res in search_results])
     return {"context": context_str}
+
 
 async def generate_node(state):
     print("--- GENERATING RESPONSE ---")
@@ -98,11 +102,13 @@ Question: {question}"""
     response = await llm.ainvoke(messages_with_context)
     return {"messages": [response]}
 
+
 # --- 3. Graph Construction ---
 def router_logic(state):
     if state["context"] == "NOT_FOUND":
         return "web_search"
     return "generate"
+
 
 workflow = StateGraph(GraphState)
 workflow.add_node("retrieve", retrieve_node)
@@ -123,6 +129,7 @@ workflow.add_edge("generate", END)
 # --- 4. PERSISTENCE (Async SQLite) ---
 DB_PATH = "memory.db"
 THREAD_ID = "market_analyst_session"
+
 
 @app.get("/chat/history")
 async def get_history():
@@ -154,6 +161,15 @@ async def get_history():
                 })
 
         return {"history": formatted}
+
+
+@app.delete("/chat/history")
+async def clear_history():
+    async with AsyncSqliteSaver.from_conn_string(DB_PATH) as saver:
+        await saver.adelete_thread(THREAD_ID)
+
+    return {"status": "ok", "message": "Chat history cleared"}
+
 
 @app.post("/chat/stream")
 async def chat_stream(request: Request):

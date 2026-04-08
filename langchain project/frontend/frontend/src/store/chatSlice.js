@@ -7,9 +7,9 @@ const chatSlice = createSlice({
     isGenerating: false,
   },
   reducers: {
-    // NEW: Handles the data coming from your /chat/history API
     setChatHistory: (state, action) => {
       state.messages = action.payload;
+      state.isGenerating = false;
     },
     addUserMessage: (state, action) => {
       state.messages.push({ role: "user", text: action.payload });
@@ -20,11 +20,15 @@ const chatSlice = createSlice({
     },
     appendChunkToLastMessage: (state, action) => {
       const lastMessage = state.messages[state.messages.length - 1];
-      if (lastMessage.role === "ai") {
+      if (lastMessage && lastMessage.role === "ai") {
         lastMessage.text += action.payload;
       }
     },
     finishGeneration: (state) => {
+      state.isGenerating = false;
+    },
+    clearChat: (state) => {
+      state.messages = [];
       state.isGenerating = false;
     },
   },
@@ -36,5 +40,7 @@ export const {
   addAiPlaceholder,
   appendChunkToLastMessage,
   finishGeneration,
+  clearChat,
 } = chatSlice.actions;
+
 export default chatSlice.reducer;
