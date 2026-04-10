@@ -13,7 +13,6 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-
 load_dotenv(find_dotenv())
 
 app_graph = None
@@ -21,6 +20,7 @@ db_saver = None
 mcp_client = None
 
 DB_PATH = "memory.db"
+THREAD_ID = "market_analyst_session"
 
 
 @asynccontextmanager
@@ -91,16 +91,39 @@ app.add_middleware(
 
 @app.get("/chat/history")
 async def get_history():
-    return {"history": []}
+    global THREAD_ID
+
+    config = {"configurable": {"thread_id": THREAD_ID}}
+    state_snapshot = await app_graph.aget_state(config)
+
+    if not state_snapshot or not state_snapshot.values:
+        return {"history": []}
+
+    raw_messages = state_snapshot.values.get("messages", [])
+    formatted = []
+
+    for msg in raw_messages:
+        if hasattr(msg, "type") and msg.type in ["human", "ai"]:
+            if msg.content:
+                formatted.append({
+                    "role": "user" if msg.type == "human" else "ai",
+                    "text": msg.content if isinstance(msg.content, str) else str(msg.content)
+                })
+
+    return {"history": formatted}
 
 
 @app.delete("/chat/history")
 async def clear_history():
-    return {"status": "ok", "message": "Chat cleared"}
+    global THREAD_ID
+    THREAD_ID = f"market_analyst_session_{uuid.uuid4().hex[:8]}"
+    return {"status": "ok", "message": "Started a new thread history"}
 
 
 @app.post("/chat/stream")
 async def chat_stream(request: Request):
+    global THREAD_ID
+
     body = await request.json()
     user_message = (body.get("message") or "").strip()
 
@@ -110,8 +133,7 @@ async def chat_stream(request: Request):
             yield "data: [DONE]\n\n"
         return StreamingResponse(empty_gen(), media_type="text/event-stream")
 
-    thread_id = f"market_analyst_session_{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": THREAD_ID}}
 
     async def event_generator():
         try:
