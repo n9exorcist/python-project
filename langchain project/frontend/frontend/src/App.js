@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useLayoutEffect,
+  useMemo,
+} from "react";
 import { useSelector, useDispatch } from "react-redux";
 import {
   addUserMessage,
@@ -8,14 +14,25 @@ import {
   setChatHistory,
   clearChat,
 } from "./store/chatSlice.js";
+import "./App.css";
 
 const API_BASE = "http://127.0.0.1:8001";
+
+const SUGGESTIONS = [
+  "Tell me Accenture Q2 2026 results from internal records",
+  "Latest news about Accenture stock",
+  "Compare Accenture results with expectations",
+  "What bookings number did you mention earlier?",
+];
 
 function App() {
   const [input, setInput] = useState("");
   const { messages, isGenerating } = useSelector((state) => state.chat);
   const dispatch = useDispatch();
+
   const abortControllerRef = useRef(null);
+  const textareaRef = useRef(null);
+  const messagesContainerRef = useRef(null);
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -43,11 +60,37 @@ function App() {
     };
   }, [dispatch]);
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || isGenerating) return;
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+  }, [input]);
 
-    const userText = input.trim();
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages, isGenerating]);
+
+  const sessionHistory = useMemo(() => {
+    return messages
+      .filter((msg) => msg.role === "user")
+      .map((msg, index) => ({
+        id: index,
+        title: msg.text.length > 48 ? `${msg.text.slice(0, 48)}...` : msg.text,
+        fullText: msg.text,
+      }))
+      .reverse();
+  }, [messages]);
+
+  const sendMessage = async (text) => {
+    if (!text.trim() || isGenerating) return;
+
+    const userText = text.trim();
     setInput("");
 
     dispatch(addUserMessage(userText));
@@ -144,6 +187,11 @@ function App() {
     }
   };
 
+  const handleSend = async (e) => {
+    e.preventDefault();
+    await sendMessage(input);
+  };
+
   const handleClearHistory = async () => {
     try {
       if (abortControllerRef.current) {
@@ -155,69 +203,167 @@ function App() {
       });
 
       dispatch(clearChat());
+      setInput("");
     } catch (err) {
       console.error("Failed to clear history:", err);
     }
   };
 
+  const handleSuggestionClick = async (text) => {
+    await sendMessage(text);
+  };
+
+  const handleHistoryClick = (text) => {
+    setInput(text);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
   return (
-    <div
-      style={{
-        maxWidth: "600px",
-        margin: "0 auto",
-        padding: "20px",
-        fontFamily: "sans-serif",
-      }}
-    >
-      <h2>LangGraph + React Stream</h2>
-
-      <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
-        <button type="button" onClick={handleClearHistory}>
-          Clear Chat
-        </button>
-      </div>
-
-      <div
-        style={{
-          height: "400px",
-          overflowY: "auto",
-          border: "1px solid #ccc",
-          padding: "10px",
-          marginBottom: "10px",
-        }}
-      >
-        {messages.map((msg, index) => (
-          <div
-            key={index}
-            style={{
-              marginBottom: "10px",
-              textAlign: msg.role === "user" ? "right" : "left",
-            }}
-          >
-            <strong style={{ color: msg.role === "user" ? "blue" : "green" }}>
-              {msg.role === "user" ? "You: " : "AI: "}
-            </strong>
-            <span style={{ whiteSpace: "pre-wrap" }}>{msg.text}</span>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand-block">
+          <div className="brand-dot" />
+          <div>
+            <div className="brand-title">Market Analyst Pro</div>
+            <div className="brand-sub">LangGraph + MCP + React</div>
           </div>
-        ))}
-      </div>
+        </div>
 
-      <form onSubmit={handleSend} style={{ display: "flex", gap: "10px" }}>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question..."
-          style={{ flexGrow: 1, padding: "10px" }}
-        />
-        <button
-          type="submit"
-          disabled={isGenerating}
-          style={{ padding: "10px 20px" }}
-        >
-          {isGenerating ? "..." : "Send"}
+        <button className="clear-button" onClick={handleClearHistory}>
+          Clear chat
         </button>
-      </form>
+
+        <div className="sidebar-section">
+          <div className="sidebar-heading">Try these</div>
+          {SUGGESTIONS.map((item) => (
+            <button
+              key={item}
+              className="suggestion-card"
+              onClick={() => handleSuggestionClick(item)}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+
+        <div className="sidebar-section history-section">
+          <div className="sidebar-heading">History</div>
+
+          {sessionHistory.length === 0 ? (
+            <div className="history-empty">No session prompts yet</div>
+          ) : (
+            sessionHistory.map((item) => (
+              <button
+                key={item.id}
+                className="history-card"
+                onClick={() => handleHistoryClick(item.fullText)}
+                title={item.fullText}
+              >
+                {item.title}
+              </button>
+            ))
+          )}
+        </div>
+      </aside>
+
+      <main className="main-panel">
+        <header className="chat-header">
+          <div>
+            <h1 className="chat-title">Market Analyst</h1>
+            <p className="chat-subtitle">
+              Ask about internal records, market news, or compare both.
+            </p>
+          </div>
+        </header>
+
+        <section ref={messagesContainerRef} className="messages-area">
+          {messages.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">✦</div>
+              <h2 className="empty-title">How can I help today?</h2>
+              <p className="empty-text">
+                Ask about internal documents, current market news, or both.
+              </p>
+
+              <div className="empty-suggestions">
+                {SUGGESTIONS.map((item) => (
+                  <button
+                    key={item}
+                    className="empty-suggestion-button"
+                    onClick={() => handleSuggestionClick(item)}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="messages-inner">
+              {messages.map((msg, index) => {
+                const isUser = msg.role === "user";
+                const isLast = index === messages.length - 1;
+
+                return (
+                  <div
+                    key={index}
+                    className={`message-row ${isUser ? "user-row" : "ai-row"}`}
+                  >
+                    <div
+                      className={`message-bubble ${isUser ? "user-bubble" : "ai-bubble"}`}
+                    >
+                      <div className="message-role">
+                        {isUser ? "You" : "Market Analyst"}
+                      </div>
+                      <div className="message-text">
+                        {msg.text?.trim()
+                          ? msg.text
+                          : isLast && isGenerating
+                            ? "Thinking..."
+                            : ""}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <div className="composer-wrap">
+          <form onSubmit={handleSend} className="composer">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Message Market Analyst..."
+              className="composer-textarea"
+              rows={1}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing
+                ) {
+                  e.preventDefault();
+                  handleSend(e);
+                }
+              }}
+            />
+            <button
+              type="submit"
+              disabled={isGenerating || !input.trim()}
+              className="send-button"
+            >
+              {isGenerating ? "..." : "Send"}
+            </button>
+          </form>
+          <div className="footer-note">
+            Enter to send, Shift + Enter for new line
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
