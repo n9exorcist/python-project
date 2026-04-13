@@ -6,7 +6,6 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.tools.tavily_search import TavilySearchResults
 
-
 load_dotenv()
 
 mcp = FastMCP("MarketAnalystPro")
@@ -92,4 +91,4 @@ Answer in a professional yet mystical tone:"""
 
 
 if __name__ == "__main__":
-    mcp.run(transport="sse")
+    mcp.run()
