@@ -297,8 +297,18 @@ async def get_history(thread_id: str = DEFAULT_THREAD_ID):
 
 @app.delete("/chat/history")
 async def clear_history(thread_id: str = DEFAULT_THREAD_ID):
+    # Optional: If you want to physically delete the records from memory.db
+    # you would execute a SQL query here. 
+    # But generating a new ID is safer for LangGraph logic:
+    
     new_thread_id = f"market_analyst_session_{uuid.uuid4().hex[:8]}"
-    return {"status": "ok", "message": "Started a new thread history", "thread_id": new_thread_id}
+    
+    # We return the NEW id. The frontend must switch to this immediately.
+    return {
+        "status": "ok", 
+        "message": "New session started", 
+        "thread_id": new_thread_id
+    }
 
 
 @app.post("/chat/stream")

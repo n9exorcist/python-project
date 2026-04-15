@@ -41,15 +41,6 @@ function App() {
   const messagesContainerRef = useRef(null);
 
   useEffect(() => {
-    const savedThreadId = localStorage.getItem(THREAD_STORAGE_KEY);
-    const initialThreadId = savedThreadId || DEFAULT_THREAD_ID;
-
-    if (threadId !== initialThreadId) {
-      dispatch(setThreadId(initialThreadId));
-    }
-  }, [dispatch]);
-
-  useEffect(() => {
     if (threadId) {
       localStorage.setItem(THREAD_STORAGE_KEY, threadId);
     }
@@ -235,18 +226,21 @@ function App() {
 
       const response = await fetch(
         `${API_BASE}/chat/history?thread_id=${encodeURIComponent(threadId)}`,
-        {
-          method: "DELETE",
-        },
+        { method: "DELETE" },
       );
 
       const data = await response.json();
-
       const newThreadId = data.thread_id || DEFAULT_THREAD_ID;
 
+      // 1. Update LocalStorage FIRST
       localStorage.setItem(THREAD_STORAGE_KEY, newThreadId);
-      dispatch(setThreadId(newThreadId));
+
+      // 2. Clear Redux state
       dispatch(clearChat());
+
+      // 3. Update the Thread ID in Redux
+      dispatch(setThreadId(newThreadId));
+
       setInput("");
     } catch (err) {
       console.error("Failed to clear history:", err);

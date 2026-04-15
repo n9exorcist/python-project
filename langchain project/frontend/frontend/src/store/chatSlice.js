@@ -1,9 +1,12 @@
 import { createSlice } from "@reduxjs/toolkit";
 
+// Synchronously grab the saved ID before Redux initializes
+const savedThreadId = localStorage.getItem("market_analyst_thread_id");
+
 const initialState = {
   messages: [],
   isGenerating: false,
-  threadId: "market_analyst_session",
+  threadId: savedThreadId || "market_analyst_session",
 };
 
 const chatSlice = createSlice({
@@ -33,6 +36,7 @@ const chatSlice = createSlice({
     clearChat: (state) => {
       state.messages = [];
       state.isGenerating = false;
+      // Do NOT reset threadId here; let the setThreadId action handle it
     },
     setThreadId: (state, action) => {
       state.threadId = action.payload || "market_analyst_session";
