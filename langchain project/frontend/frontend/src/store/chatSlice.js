@@ -1,16 +1,15 @@
 import { createSlice } from "@reduxjs/toolkit";
 
+const initialState = {
+  messages: [],
+  isGenerating: false,
+  threadId: "market_analyst_session",
+};
+
 const chatSlice = createSlice({
   name: "chat",
-  initialState: {
-    messages: [],
-    isGenerating: false,
-  },
+  initialState,
   reducers: {
-    setChatHistory: (state, action) => {
-      state.messages = action.payload;
-      state.isGenerating = false;
-    },
     addUserMessage: (state, action) => {
       state.messages.push({ role: "user", text: action.payload });
     },
@@ -19,28 +18,36 @@ const chatSlice = createSlice({
       state.isGenerating = true;
     },
     appendChunkToLastMessage: (state, action) => {
-      const lastMessage = state.messages[state.messages.length - 1];
-      if (lastMessage && lastMessage.role === "ai") {
-        lastMessage.text += action.payload;
-      }
+      if (!state.messages.length) return;
+      const last = state.messages[state.messages.length - 1];
+      if (last.role !== "ai") return;
+      last.text = (last.text || "") + action.payload;
     },
     finishGeneration: (state) => {
+      state.isGenerating = false;
+    },
+    setChatHistory: (state, action) => {
+      state.messages = Array.isArray(action.payload) ? action.payload : [];
       state.isGenerating = false;
     },
     clearChat: (state) => {
       state.messages = [];
       state.isGenerating = false;
     },
+    setThreadId: (state, action) => {
+      state.threadId = action.payload || "market_analyst_session";
+    },
   },
 });
 
 export const {
-  setChatHistory,
   addUserMessage,
   addAiPlaceholder,
   appendChunkToLastMessage,
   finishGeneration,
+  setChatHistory,
   clearChat,
+  setThreadId,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;

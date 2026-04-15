@@ -13,11 +13,14 @@ import {
   finishGeneration,
   setChatHistory,
   clearChat,
+  setThreadId,
 } from "./store/chatSlice.js";
 import Home from "./React/Home.js";
 import "./App.css";
 
 const API_BASE = "http://127.0.0.1:8001";
+const DEFAULT_THREAD_ID = "market_analyst_session";
+const THREAD_STORAGE_KEY = "market_analyst_thread_id";
 
 const SUGGESTIONS = [
   "Tell me Accenture Q2 2026 results from internal records",
@@ -28,7 +31,9 @@ const SUGGESTIONS = [
 
 function App() {
   const [input, setInput] = useState("");
-  const { messages, isGenerating } = useSelector((state) => state.chat);
+  const { messages, isGenerating, threadId } = useSelector(
+    (state) => state.chat,
+  );
   const dispatch = useDispatch();
 
   const abortControllerRef = useRef(null);
@@ -36,10 +41,34 @@ function App() {
   const messagesContainerRef = useRef(null);
 
   useEffect(() => {
+    const savedThreadId = localStorage.getItem(THREAD_STORAGE_KEY);
+    const initialThreadId = savedThreadId || DEFAULT_THREAD_ID;
+
+    if (threadId !== initialThreadId) {
+      dispatch(setThreadId(initialThreadId));
+    }
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (threadId) {
+      localStorage.setItem(THREAD_STORAGE_KEY, threadId);
+    }
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!threadId) return;
+
     const fetchHistory = async () => {
       try {
-        const response = await fetch(`${API_BASE}/chat/history`);
+        const response = await fetch(
+          `${API_BASE}/chat/history?thread_id=${encodeURIComponent(threadId)}`,
+        );
         const data = await response.json();
+
+        if (data.thread_id && data.thread_id !== threadId) {
+          dispatch(setThreadId(data.thread_id));
+          localStorage.setItem(THREAD_STORAGE_KEY, data.thread_id);
+        }
 
         if (data.history && Array.isArray(data.history)) {
           dispatch(setChatHistory(data.history));
@@ -59,7 +88,7 @@ function App() {
         abortControllerRef.current.abort();
       }
     };
-  }, [dispatch]);
+  }, [dispatch, threadId]);
 
   useLayoutEffect(() => {
     const el = textareaRef.current;
@@ -89,7 +118,7 @@ function App() {
   }, [messages]);
 
   const sendMessage = async (text) => {
-    if (!text.trim() || isGenerating) return;
+    if (!text.trim() || isGenerating || !threadId) return;
 
     const userText = text.trim();
     setInput("");
@@ -107,7 +136,10 @@ function App() {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
         },
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({
+          message: userText,
+          thread_id: threadId,
+        }),
         signal: controller.signal,
       });
 
@@ -199,10 +231,21 @@ function App() {
         abortControllerRef.current.abort();
       }
 
-      await fetch(`${API_BASE}/chat/history`, {
-        method: "DELETE",
-      });
+      if (!threadId) return;
 
+      const response = await fetch(
+        `${API_BASE}/chat/history?thread_id=${encodeURIComponent(threadId)}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      const data = await response.json();
+
+      const newThreadId = data.thread_id || DEFAULT_THREAD_ID;
+
+      localStorage.setItem(THREAD_STORAGE_KEY, newThreadId);
+      dispatch(setThreadId(newThreadId));
       dispatch(clearChat());
       setInput("");
     } catch (err) {

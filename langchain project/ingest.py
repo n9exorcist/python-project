@@ -8,7 +8,6 @@ from langchain_core.documents import Document
 from langchain_community.document_loaders import PyPDFLoader, CSVLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-
 load_dotenv()
 
 gemini_key = os.getenv("GEMINI_API_KEY")
@@ -59,6 +58,29 @@ def load_local_documents():
     return loaded_docs
 
 
+def build_embeddings_with_retry():
+    return GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-001",
+        google_api_key=gemini_key
+    )
+
+
+def safe_from_documents(batch, embeddings, max_retries=5):
+    delay = 10
+    for attempt in range(max_retries):
+        try:
+            return FAISS.from_documents(batch, embeddings)
+        except Exception as e:
+            msg = str(e)
+            if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                if attempt < max_retries - 1:
+                    wait = delay * (2 ** attempt)
+                    print(f"429 hit. Waiting {wait}s before retrying...")
+                    time.sleep(wait)
+                    continue
+            raise
+
+
 print("Starting ingestion process...")
 
 try:
@@ -68,25 +90,35 @@ try:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         documents = text_splitter.split_documents(raw_documents)
 
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-001",
-            google_api_key=gemini_key
-        )
+        embeddings = build_embeddings_with_retry()
 
-        batch_size = 25
+        batch_size = 10
         vector_db = None
 
         for i in range(0, len(documents), batch_size):
             batch = documents[i:i + batch_size]
 
             if vector_db is None:
-                vector_db = FAISS.from_documents(batch, embeddings)
+                vector_db = safe_from_documents(batch, embeddings)
             else:
-                vector_db.add_documents(batch)
+                retry_delay = 10
+                for attempt in range(5):
+                    try:
+                        vector_db.add_documents(batch)
+                        break
+                    except Exception as e:
+                        msg = str(e)
+                        if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                            if attempt < 4:
+                                wait = retry_delay * (2 ** attempt)
+                                print(f"429 hit while adding docs. Waiting {wait}s before retrying...")
+                                time.sleep(wait)
+                                continue
+                        raise
 
             if i + batch_size < len(documents):
                 print("Waiting for rate limit...")
-                time.sleep(35)
+                time.sleep(75)
 
         vector_db.save_local("faiss_index")
         print("\nSUCCESS: FAISS index saved!")

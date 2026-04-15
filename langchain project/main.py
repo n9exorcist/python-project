@@ -27,7 +27,7 @@ llm_with_tools = None
 mcp_tools = []
 
 DB_PATH = "memory.db"
-THREAD_ID = "market_analyst_session"
+DEFAULT_THREAD_ID = "market_analyst_session"
 
 
 class GraphState(TypedDict, total=False):
@@ -274,14 +274,12 @@ app.add_middleware(
 
 
 @app.get("/chat/history")
-async def get_history():
-    global THREAD_ID
-
-    config = {"configurable": {"thread_id": THREAD_ID}}
+async def get_history(thread_id: str = DEFAULT_THREAD_ID):
+    config = {"configurable": {"thread_id": thread_id}}
     state_snapshot = await app_graph.aget_state(config)
 
     if not state_snapshot or not state_snapshot.values:
-        return {"history": []}
+        return {"history": [], "thread_id": thread_id}
 
     raw_messages = state_snapshot.values.get("messages", [])
     formatted = []
@@ -294,22 +292,20 @@ async def get_history():
                     "text": msg.content if isinstance(msg.content, str) else str(msg.content)
                 })
 
-    return {"history": formatted}
+    return {"history": formatted, "thread_id": thread_id}
 
 
 @app.delete("/chat/history")
-async def clear_history():
-    global THREAD_ID
-    THREAD_ID = f"market_analyst_session_{uuid.uuid4().hex[:8]}"
-    return {"status": "ok", "message": "Started a new thread history"}
+async def clear_history(thread_id: str = DEFAULT_THREAD_ID):
+    new_thread_id = f"market_analyst_session_{uuid.uuid4().hex[:8]}"
+    return {"status": "ok", "message": "Started a new thread history", "thread_id": new_thread_id}
 
 
 @app.post("/chat/stream")
 async def chat_stream(request: Request):
-    global THREAD_ID
-
     body = await request.json()
     user_message = (body.get("message") or "").strip()
+    thread_id = body.get("thread_id") or DEFAULT_THREAD_ID
 
     if not user_message:
         async def empty_gen():
@@ -317,7 +313,7 @@ async def chat_stream(request: Request):
             yield "data: [DONE]\n\n"
         return StreamingResponse(empty_gen(), media_type="text/event-stream")
 
-    config = {"configurable": {"thread_id": THREAD_ID}}
+    config = {"configurable": {"thread_id": thread_id}}
 
     async def event_generator():
         try:
