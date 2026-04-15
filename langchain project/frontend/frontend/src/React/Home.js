@@ -4,12 +4,13 @@ import Onewaydatabinding from "./Onewaydatabinding";
 import ConditionalRendering from "./ConditionalRendering";
 import ListAndKey from "./ListAndKey";
 import Axios from "./Axios";
-import UseEffecty from "./Functional Compoments/UseEffecty";
-import UseContexty from "./Functional Compoments/UseContexty";
-import useReducery from "./Functional Compoments/useReducery";
-import ControlledComp from "./Functional Compoments/ControlledComp";
-import UnControlledComp from "./Functional Compoments/UnControlledComp";
-import UseCallbackParent from "./Functional Compoments/UseCallbackParent";
+import UseEffecty from "./Functional Components/UseEffecty";
+import UseContexty from "./Functional Components/UseContexty";
+
+import ControlledComp from "./Functional Components/ControlledComp";
+import UnControlledComp from "./Functional Components/UnControlledComp";
+import UseCallbackParent from "./Functional Components/UseCallbackParent";
+import UseReducersy from "./Functional Components/UseReducersy";
 
 // Create a ThemeContext to manage dark mode state
 export const ThemeContext = createContext();
@@ -19,7 +20,7 @@ const Home = () => {
 
   // Initial state for the reducer
   // Initial state of an object with a count property set to 0
-  const [state, dispatch] = React.useReducer(useReducery, { count: 0 });
+  const [state, dispatch] = React.useReducer(UseReducersy, { count: 0 });
 
   // 2. Define a state that will be shared across components, in this case, dark mode state
   const [isDarkMode, setIsDarkMode] = useState(false);

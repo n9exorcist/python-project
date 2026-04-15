@@ -5,7 +5,7 @@ const UseCallbackParent = () => {
   const [add, setAdd] = React.useState(0);
   const [count, setCount] = React.useState(0);
 
-  // Usecallback to memoize the function, it will only change if the count changes
+  // useMemo memoizes the returned value, and it recalculates only when `learning` changes
   //It will not recreate when add changes, it will only recreate when count changes
 
   const learning = React.useCallback(() => {
@@ -15,8 +15,8 @@ const UseCallbackParent = () => {
     <>
       <h1>UseCallback and Usememo in React</h1>
       <h3>Parent Component</h3>
-      <div>Add(Local State): {add}</div>
-      <div>Count(Shared State): {count}</div>
+      <div>Add(Local State) in Parent Component: {add}</div>
+      <div>Count(Shared State) in Parent Component: {count}</div>
       <button onClick={() => setAdd(add + 1)}>
         Update Add (No Child Render)
       </button>
