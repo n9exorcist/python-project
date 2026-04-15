@@ -171,6 +171,10 @@ For production, consider adding logging, rate‑limiting, and unit tests.
 
 EXECUTION:
 
-(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> fastmcp run mcp_market_scanner_server.py --transport sse --host 127.0.0.1 --port 9002
+PS C:\Users\narayanan.selvaraj\python project\langchain project\frontend\frontend> npm start
 
-(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> python scanner_main_client.py
+(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> fastmcp run mcp_market_scanner_server.py --transport sse --host 127.0.0.1 --port 9001
+
+(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> uvicorn main:app --host 127.0.0.1 --port 8001 --reload
+
+(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> langgraph dev
