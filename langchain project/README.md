@@ -419,3 +419,73 @@ PS C:\Users\narayanan.selvaraj\python project\langchain project\frontend\fronten
 (venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 
 (venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> langgraph dev
+
+---
+
+1. Test: FAISS + Manual Docs (local route)
+   The router looks for: "internal", "records", "document", "faiss", "local"
+
+Prompt A (Testing personal data): > "According to our internal records, who is Narayanan Selvaraj and what does he specialize in?"
+
+Expected: It should route to local, call mcp_search_corporate_records, find the manual doc, and tell you he is a Team Lead at Accenture specializing in Full-Stack LLM and ReactJS.
+
+Prompt B (Testing corporate data):
+
+"What do the local documents say about Accenture's dividend and Julie Sweet?"
+
+Expected: It should retrieve the manual docs mentioning the $1.63 dividend and Julie Sweet's note on AI-driven growth.
+
+Prompt C (Testing commodities/defense):
+
+"Check the faiss index for information regarding copper and the defense sector."
+
+Expected: It should pull the sentences about copper being conductive and defense relying on robotics.
+
+2. Test: Web Search / Tavily (web route)
+   The router looks for: "latest", "news", "today", "current", "market reaction", "web"
+
+Prompt A (Live data fetch): > "What is the latest news today regarding the S&P 500?"
+
+Expected: It should route to web, call mcp_search_the_web, hit the Tavily API, and stream back real-time news from today.
+
+Prompt B (Live company data):
+
+"Search the web for the current market reaction to Nvidia's stock."
+
+Expected: It should fetch live internet data about Nvidia.
+
+3. Test: Hybrid Routing (Comparing FAISS vs. Web)
+   The router looks for: "compare", "versus", "vs", "both", "internal and web"
+
+Prompt A (The Ultimate E2E Test):
+
+"Compare our internal records regarding Accenture's Q2 FY26 revenue versus the latest news about Accenture's stock performance today."
+
+Expected: The router should set the route to hybrid. The LLM should make two tool calls: one to FAISS for the $18.0B revenue, and one to Tavily for today's stock news, then synthesize them together.
+
+4. Test: MCP Resource (market://cycles)
+   Because you instructed the LLM to use "the divine wisdom of Market Cycles" in the system prompt, you can prompt it to fetch this specific resource.
+
+Prompt A:
+
+"Read the Market Cycles resource. What does the wisdom say about the Gold-Silver ratio and the defense sector?"
+
+Expected: The LLM should request to read the market://cycles URI from the MCP server and quote the text about looking to the stars and the current ratio for reversal signs.
+
+5. Test: The Persona & System Rules
+   Testing the hardcoded instructions in your market_analyst_persona and agent_node system prompts.
+
+Prompt A:
+
+"Tell me about Accenture Q2 2026."
+
+Expected: Even without specifying "internal records", the system prompt rules mandate that it mentions "$18.0B revenue or $22.1B bookings". It should answer in a "professional yet mystical tone."
+
+6. Test: The Validator Node (Self-Correction/Retry)
+   Testing if your LangGraph graph successfully catches bad retrievals and loops back.
+
+Prompt A:
+
+"Search our internal records for the recipe to bake a chocolate cake."
+
+Expected: The agent will try to search FAISS for a cake recipe. FAISS will return nothing (or hallucinated garbage). Your validator_node will detect "No local records found" in the tool output, set the status to retry, and loop back to the agent. It will likely end up gracefully telling you that the corporate records do not contain baking recipes.

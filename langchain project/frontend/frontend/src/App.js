@@ -23,10 +23,14 @@ const DEFAULT_THREAD_ID = "market_analyst_session";
 const THREAD_STORAGE_KEY = "market_analyst_thread_id";
 
 const SUGGESTIONS = [
-  "Tell me Accenture Q2 2026 results from internal records",
-  "Latest news about Accenture stock",
-  "Compare Accenture results with expectations",
-  "What bookings number did you mention earlier?",
+  "According to our internal records, who is Narayanan Selvaraj and what does he specialize in?",
+  "What do the local documents say about Accenture's dividend and Julie Sweet?",
+  "What is the latest news today regarding the S&P 500?",
+  "Search the web for the current market reaction to Accenture's stock",
+  "Compare our internal records regarding Accenture's Q2 FY26 revenue versus the latest news about Accenture's stock performance today.",
+  "Read the Market Cycles resource. What does the wisdom say about the Gold-Silver ratio and the defense sector?",
+  "Tell me about Accenture Q2 2026.",
+  "Search our internal records for the recipe to bake a chocolate cake.",
 ];
 
 function App() {
