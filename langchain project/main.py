@@ -65,12 +65,18 @@ async def daily_trade_job():
     from app.db.database import db_session
 
     try:
-        # 1. Automate Session Refresh
-        session_token = await get_breeze_token()
+        # 1. Check for a manual session token first (Workaround for Cloud IP blocking)
+        session_token = os.getenv("ICICI_SESSION_TOKEN")
+        
         if not session_token:
+            print("No manual token found. Attempting automated login...")
+            session_token = await get_breeze_token()
+
+        if not session_token:
+            send_telegram_msg("❌ ICICI Login Failed: No session token available.")
             return
 
-        # Initialize ICICI Breeze with new token
+        # Initialize ICICI Breeze with the token
         breeze_client.generate_session(session_token)
         
         # 2. Check Signal
@@ -134,9 +140,10 @@ async def lifespan(app: FastAPI):
             mcp_tools = []
 
         if not mcp_tools:
-            raise RuntimeError("No MCP tools loaded. Please start mcp_server.py first.")
+            print("--- WARNING: No MCP tools loaded. AI features will be limited, but trading will continue. ---")
+        else:
+            llm_with_tools = llm.bind_tools(mcp_tools)
 
-        llm_with_tools = llm.bind_tools(mcp_tools)
 
         def router_node(state: GraphState):
             messages = state.get("messages", [])
