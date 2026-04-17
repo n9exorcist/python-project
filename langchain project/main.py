@@ -467,5 +467,15 @@ async def chat_stream(request: Request):
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8001, reload=True)
+    import asyncio
+    
+    # Check if we are running in GitHub Actions
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        print("--- [CLOUD] Running One-Time Trade Execution ---")
+        from app.db.database import init_db  # Import init_db here
+        init_db()                            # Create tables before trading
+        asyncio.run(daily_trade_job())
+    else:
+        # Local development: keep the FastAPI server alive
+        import uvicorn
+        uvicorn.run("main:app", host="127.0.0.1", port=8001, reload=True)
