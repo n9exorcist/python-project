@@ -84,7 +84,7 @@ async def daily_trade_job():
         # 2. Initialize ICICI Breeze Session
         # We wrap this in a try to catch invalid/expired tokens immediately
         try:
-            breeze_client.generate_session(session_token)
+            breeze_client.breeze.generate_session(api_secret=os.getenv("ICICI_SECRET_KEY"), session_token=session_token)
             print("--- [AUTH] ICICI Breeze Session successfully initialized ---")
         except Exception as auth_err:
             send_telegram_msg(f"❌ ICICI Session Error: {str(auth_err)}")
