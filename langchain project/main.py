@@ -171,7 +171,10 @@ async def lifespan(app: FastAPI):
             }.get(route, "Use MCP tools whenever factual lookup is needed.")
 
             system_prompt = f"""You are a Market Analyst.
-Synthesize earthly corporate data with the divine wisdom of Market Cycles.
+The current year is 2026. 
+
+When users ask about "today" or "April 17", use the year 2026.
+Format dates for tools as DD-MM-YYYY (e.g., 17-04-2026).
 
 ROUTING GUIDANCE:
 {routing_instruction}
