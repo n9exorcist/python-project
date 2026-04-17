@@ -6,9 +6,18 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv, find_dotenv
 from fastapi import FastAPI, Request
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+# Trading Services (Internal Modules)
+from app.db.database import init_db, db_session
+from app.brokers.icici_breeze import ICICIBreezeClient
+from app.core.mock_broker import MockBroker
+from app.core.signal_service import SignalService
+from app.core.strategy_service import StrategyService
+
+# AI / LangChain / LangGraph
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
@@ -17,8 +26,10 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+# Load environment variables from .env
 load_dotenv(find_dotenv())
 
+# --- GLOBAL OBJECTS ---
 app_graph = None
 db_saver = None
 mcp_client = None
@@ -26,10 +37,17 @@ llm = None
 llm_with_tools = None
 mcp_tools = []
 
+# --- TRADING SERVICE INITIALIZATION ---
+breeze_client = ICICIBreezeClient()
+# MockBroker uses the global db_session
+mock_broker = MockBroker(db_session, breeze_client) 
+signal_svc = SignalService()
+strategy_svc = StrategyService(mock_broker, breeze_client)
+
 DB_PATH = "memory.db"
 DEFAULT_THREAD_ID = "market_analyst_session"
 
-
+# --- LANGGRAPH STATE DEFINITION ---
 class GraphState(TypedDict, total=False):
     messages: Annotated[list, add_messages]
     route: str
@@ -37,13 +55,54 @@ class GraphState(TypedDict, total=False):
     retry_count: int
     final_answer: str
 
+# --- BACKGROUND TRADING TASK ---
+def daily_trade_job():
+    """Triggered daily at 9:16 AM to execute astrological signals."""
+    print("--- [SCHEDULER] 9:16 AM: Running Astrological Strategy ---")
+    
+    # Refresh session to prevent 'DetachedInstanceError' or stale connections
+    from app.db.database import db_session
+    
+    try:
+        # 1. Check Signal
+        signal = signal_svc.get_today_signal()
+        
+        if signal:
+            # 2. Execute Strategy (which now uses ICICI for live price and MockBroker for DB)
+            status = strategy_svc.execute_logic(signal)
+            print(f"--- [SCHEDULER] Trade Result: {status} ---")
+            
+            # 3. Commit the trade to memory.db
+            db_session.commit() 
+        else:
+            print("--- [SCHEDULER] No trade signal for today (Neutral/Holiday) ---")
+            
+    except Exception as e:
+        db_session.rollback()
+        print(f"--- [SCHEDULER] Trade Job Failed: {e} ---")
+    finally:
+        db_session.remove() # Clean up session for the next day
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global app_graph, db_saver, mcp_client, llm, llm_with_tools, mcp_tools
 
-    print("--- STARTING UP FASTAPI ---")
+    print("--- STARTING UP FASTAPI & TRADING ENGINE ---")
 
+    # Import the centralized DB_PATH from your database.py
+    from app.db.database import DB_PATH, init_db
+    
+    # Initialize the Trading Tables in SQLite
+    init_db()
+
+    # Start the Trading Scheduler
+    scheduler = BackgroundScheduler()
+    # Ensure timezone is specified if running on a remote server (e.g., timezone='Asia/Kolkata')
+    scheduler.add_job(daily_trade_job, 'cron', day_of_week='mon-fri', hour=9, minute=15)  # 9:16 AM IST is 3:46 AM UTC, adjust as needed
+    scheduler.start()
+
+# 2. Setup AI Infrastructure (Groq + LangGraph + MCP)
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as saver:
         db_saver = saver
         await db_saver.setup()
@@ -85,7 +144,7 @@ async def lifespan(app: FastAPI):
 
             lowered = user_text.lower()
 
-            if any(word in lowered for word in ["internal", "records", "document", "faiss", "local"]):
+            if any(word in lowered for word in ["internal", "records", "document", "faiss", "local", "history", "database", "db", "verify", "logged", "trade log"]):
                 route = "local"
             elif any(word in lowered for word in ["latest", "news", "today", "current", "market reaction", "web"]):
                 route = "web"
@@ -117,7 +176,15 @@ Synthesize earthly corporate data with the divine wisdom of Market Cycles.
 ROUTING GUIDANCE:
 {routing_instruction}
 
+TOOLS AVAILABLE:
+- mcp_read_signals_csv: Use this for Green/Red signal lookups.
+- mcp_get_trade_history: Use this to check memory.db for executed trades.
+- mcp_search_corporate_records: Use for internal Accenture/market docs.
+- mcp_search_the_web: Use for live news.
+
 RULES:
+- When asked to "verify", "check history", or "check database", you MUST use the mcp_get_trade_history tool.
+- Do not apologize for missing data until you have actually called the tool and received an empty result.
 - Always use your MCP tools when factual lookup is needed.
 - If the question is about Accenture Q2 2026, ensure you mention $18.0B revenue or $22.1B bookings if supported by retrieved context.
 - Keep answers concise, factual, and useful.
@@ -258,6 +325,7 @@ RULES:
         yield
 
         print("--- SHUTTING DOWN ---")
+        scheduler.shutdown()
         if mcp_client and hasattr(mcp_client, "close"):
             await mcp_client.close()
 
