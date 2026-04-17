@@ -1,18 +1,31 @@
 # Python environment
 venv/
 __pycache__/
-*.pyc
+*.py[cod]
 
 # Sensitive API Keys (CRITICAL)
 .env
 
-# Large Vector Database files
-faiss_index/
+# Database Persistence (Don't push your local trade history)
+*.db
+*.db-shm
+*.db-wal
 
-# OS files
-.DS_Store
-Thumbs.db
+# Large Vector Database / FAISS
+faiss_index/
+# If you want to push the index structure but not the data, 
+# keep it as is. Otherwise, ignore it.
 
 # Frontend
 **/node_modules/
 **/build/
+.eslintcache
+
+# Logs & Project Artifacts
+logs/
+*.log
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

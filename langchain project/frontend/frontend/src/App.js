@@ -28,7 +28,7 @@ const SUGGESTIONS = [
   "What is the latest news today regarding the S&P 500?",
   "Search the web for the current market reaction to Accenture's stock",
   "Compare our internal records regarding Accenture's Q2 FY26 revenue versus the latest news about Accenture's stock performance today.",
-  "Read the Market Cycles resource. What does the wisdom say about the Gold-Silver ratio and the defense sector?",
+  "Read the Market Cycles resource. What does the market cycle say about the Gold-Silver ratio and the defense sector?",
   "Tell me about Accenture Q2 2026.",
   "Search our internal records for the recipe to bake a chocolate cake.",
 ];

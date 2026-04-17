@@ -81,7 +81,7 @@ async def _build_graph():
         }.get(route, "Use MCP tools whenever factual lookup is needed.")
 
         system_prompt = f"""You are a Market Analyst.
-Synthesize earthly corporate data with the divine wisdom of Market Cycles.
+Synthesize earthly corporate data of Market Cycles.
 
 ROUTING GUIDANCE:
 {routing_instruction}

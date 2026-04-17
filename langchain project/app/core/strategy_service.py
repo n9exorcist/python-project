@@ -7,7 +7,7 @@ class StrategyService:
 
     def execute_logic(self, signal):
         """
-        The core automation logic triggered at 9:16 AM.
+        The core automation logic triggered at 9:15 AM.
         """
         if not signal or signal.strip() == "":
             return "Strategy skipped: No Signal provided."

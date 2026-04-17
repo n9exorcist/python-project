@@ -1,10 +1,10 @@
-Market Analyst Pro: AI-Driven Astrological Trading Engine
-Market Analyst Pro is a sophisticated, end-to-end automated trading and analysis system. It bridges the gap between financial astrology (Nakshatras and planetary transits) and modern algorithmic execution. By leveraging LangGraph for AI orchestration, MCP for localized data toolsets, and ICICI Breeze for real-time market data, it automates the "Analysis-to-Execution" pipeline.
+Market Analyst Pro: AI-Driven Options Selling Trading Engine
+Market Analyst Pro is a sophisticated, end-to-end automated trading and analysis system. By leveraging LangGraph for AI orchestration, MCP for localized data toolsets, and ICICI Breeze for real-time market data, it automates the "Analysis-to-Execution" pipeline.
 
 🏗️ System Architecture
-The system operates on two parallel tracks: Automated Execution (9:16 AM) and Interactive AI Insights (User Chat).
+The system operates on two parallel tracks: Automated Execution (9:15 AM) and Interactive AI Insights (User Chat).
 
-1. The Automated Journey (9:16 AM IST)
+1. The Automated Journey (9:15 AM IST)
    Trigger: APScheduler fires the daily_trade_job.
 
 Signal: SignalService retrieves the day's bias (Green/Red) from signals.csv.
@@ -32,7 +32,7 @@ icici_breeze.py: Live market pipe for quotes and session management.
 
 core/:
 
-strategy_service.py: The "Decision Maker" applying astrological rules to price data.
+strategy_service.py: The "Decision Maker" applying Options Selling rules to price data.
 
 signal_service.py: Interface for reading proprietary CSV signals.
 
@@ -69,7 +69,7 @@ Handles the local data tools (CSV lookup, DB queries).
 Bash
 fastmcp run mcp_server.py --transport sse --host 127.0.0.1 --port 9001
 Step 2: Start the Backend (FastAPI)
-Triggers the 9:16 AM scheduler and hosts the AI Graph.
+Triggers the 9:15 AM scheduler and hosts the AI Graph.
 
 Bash
 uvicorn main:app --host 127.0.0.1 --port 8001 --reload
@@ -83,7 +83,7 @@ npm start
 Integrated Data Flow
 Generate Token: Daily 9:00 AM login to ICICI Breeze to update ICICI_SESSION_TOKEN.
 
-Market Open (9:16 AM):
+Market Open (9:15 AM):
 
 main.py ➡️ signal_service.py (Reads "Green")
 
@@ -109,9 +109,9 @@ Developed by Narayanan Selvaraj - Team Lead | Full-Stack LLM & ReactJS.
 ---
 
 graph TD
-%% 9:16 AM Automated Journey
-subgraph "A. 9:16 AM: The Automated Trading Journey"
-Scheduler[Daily Scheduler (APScheduler)] -->|1. Fired 9:16 AM| DailyJob[Daily Trade Job (main.py)]
+%% 9:15 AM Automated Journey
+subgraph "A. 9:15 AM: The Automated Trading Journey"
+Scheduler[Daily Scheduler (APScheduler)] -->|1. Fired 9:15 AM| DailyJob[Daily Trade Job (main.py)]
 DailyJob -->|2. Check Today's Signal| SignalSVC[Signal Service (signals.csv)]
 SignalSVC -->|Returns 'Green'| DailyJob
 DailyJob -->|3. Execute Strategy| StratSVC[Strategy Service (strategy_service.py)]
@@ -178,9 +178,9 @@ The Flow: You run this manually to verify your .env session token is still valid
 3. The core Folder: The Business Engine
    strategy_service.py:
 
-Role: The "Decision Maker." This is where your financial astrology rules live.
+Role: The "Decision Maker." This is where your Options Selling rules live.
 
-The Flow: At 9:16 AM, this file takes the signal (Green/Red) and the Nifty price, then calculates the strike price.
+The Flow: At 9:15 AM, this file takes the signal (Green/Red) and the Nifty price, then calculates the strike price.
 
 signal_service.py:
 
@@ -208,7 +208,7 @@ memory.db files:
 Role: The "Storage." This is the actual file where your trades and AI conversation history are saved. The -wal and -shm files are temporary files SQLite uses to handle multiple tasks at once (Write-Ahead Logs).
 
 The Integrated Data Flow
-Imagine a single "Trade Event" at 9:16 AM:
+Imagine a single "Trade Event" at 9:15 AM:
 
 Trigger: main.py (Scheduler) calls daily_trade_job().
 

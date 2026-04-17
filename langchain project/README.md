@@ -464,11 +464,11 @@ Prompt A (The Ultimate E2E Test):
 Expected: The router should set the route to hybrid. The LLM should make two tool calls: one to FAISS for the $18.0B revenue, and one to Tavily for today's stock news, then synthesize them together.
 
 4. Test: MCP Resource (market://cycles)
-   Because you instructed the LLM to use "the divine wisdom of Market Cycles" in the system prompt, you can prompt it to fetch this specific resource.
+   Because you instructed the LLM to use "the Market Cycles" in the system prompt, you can prompt it to fetch this specific resource.
 
 Prompt A:
 
-"Read the Market Cycles resource. What does the wisdom say about the Gold-Silver ratio and the defense sector?"
+"Read the Market Cycles resource. What does the market cycles say about the Gold-Silver ratio and the defense sector?"
 
 Expected: The LLM should request to read the market://cycles URI from the MCP server and quote the text about looking to the stars and the current ratio for reversal signs.
 

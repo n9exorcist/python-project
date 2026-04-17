@@ -41,11 +41,11 @@ else:
 
 # --- NEW: CSV SIGNAL TOOL ---
 @mcp.tool()
-def mcp_read_signals_csv(date: str = "today", time: str = "9:16 AM") -> str:
+def mcp_read_signals_csv(date: str = "today", time: str = "9:15 AM") -> str:
     """
     USE THIS TOOL TO READ THE LOCAL FILE 'signals.csv'. 
     This is NOT for stock tickers. Use this to find the 'Candle' color 
-    (Green/Red) for a specific date from the local astrological records.
+    (Green/Red) for a specific date from the local Options Selling records.
     """
     # 1. Handle 'today' logic
     # FIX: Ensure we use 'target_date' consistently
@@ -82,7 +82,7 @@ def mcp_read_signals_csv(date: str = "today", time: str = "9:16 AM") -> str:
         else:
             bias = "NEUTRAL (No Trade / Observation)"
         
-        return (f"Astrological Data for {target_date}:\n"
+        return (f"Options Selling Data for {target_date}:\n"
                 f"Entry Time: {time}\n"
                 f"Candle Signal: {signal}\n"
                 f"Strategy Bias: {bias}")
@@ -135,7 +135,6 @@ def mcp_get_trade_history(date: str = "today") -> str:
 @mcp.resource("market://cycles")
 def get_market_cycles() -> str:
     return (
-        "Market Cycle Wisdom: Look to the stars and corporate transits. "
         "Defense sectors thrive under robotic advancement; Gold/Silver remain safe havens. "
         "Observe the current ratio for Gold-Silver for reversal signs."
     )

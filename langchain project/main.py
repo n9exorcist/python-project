@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from app.core.autopilot import send_telegram_msg, refresh_icici_session
 
 # Trading Services (Internal Modules)
 from app.db.database import init_db, db_session
@@ -25,6 +26,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from app.db.database import DB_PATH
 
 # Load environment variables from .env
 load_dotenv(find_dotenv())
@@ -44,7 +46,7 @@ mock_broker = MockBroker(db_session, breeze_client)
 signal_svc = SignalService()
 strategy_svc = StrategyService(mock_broker, breeze_client)
 
-DB_PATH = "memory.db"
+
 DEFAULT_THREAD_ID = "market_analyst_session"
 
 # --- LANGGRAPH STATE DEFINITION ---
@@ -56,32 +58,35 @@ class GraphState(TypedDict, total=False):
     final_answer: str
 
 # --- BACKGROUND TRADING TASK ---
-def daily_trade_job():
-    """Triggered daily at 9:16 AM to execute astrological signals."""
-    print("--- [SCHEDULER] 9:16 AM: Running Astrological Strategy ---")
-    
-    # Refresh session to prevent 'DetachedInstanceError' or stale connections
+from app.core.autopilot import get_breeze_token, send_telegram_msg
+
+async def daily_trade_job():
+    print("--- [SCHEDULER] 9:15 AM: Running Options Selling Strategy ---")
     from app.db.database import db_session
-    
+
     try:
-        # 1. Check Signal
-        signal = signal_svc.get_today_signal()
+        # 1. Automate Session Refresh
+        session_token = await get_breeze_token()
+        if not session_token:
+            return
+
+        # Initialize ICICI Breeze with new token
+        breeze_client.generate_session(session_token)
         
+        # 2. Check Signal
+        signal = signal_svc.get_today_signal()
         if signal:
-            # 2. Execute Strategy (which now uses ICICI for live price and MockBroker for DB)
             status = strategy_svc.execute_logic(signal)
-            print(f"--- [SCHEDULER] Trade Result: {status} ---")
-            
-            # 3. Commit the trade to memory.db
-            db_session.commit() 
+            db_session.commit()
+            send_telegram_msg(f"🚀 Trade Executed!\nSignal: {signal}\nStatus: {status}")
         else:
-            print("--- [SCHEDULER] No trade signal for today (Neutral/Holiday) ---")
+            send_telegram_msg("🌙 No Options Selling signal for today.")
             
     except Exception as e:
         db_session.rollback()
-        print(f"--- [SCHEDULER] Trade Job Failed: {e} ---")
+        send_telegram_msg(f"⚠️ Scheduler Error: {str(e)}")
     finally:
-        db_session.remove() # Clean up session for the next day
+        db_session.remove()
 
 
 @asynccontextmanager
@@ -99,7 +104,7 @@ async def lifespan(app: FastAPI):
     # Start the Trading Scheduler
     scheduler = BackgroundScheduler()
     # Ensure timezone is specified if running on a remote server (e.g., timezone='Asia/Kolkata')
-    scheduler.add_job(daily_trade_job, 'cron', day_of_week='mon-fri', hour=9, minute=15)  # 9:16 AM IST is 3:46 AM UTC, adjust as needed
+    scheduler.add_job(daily_trade_job, 'cron', day_of_week='mon-fri', hour=9, minute=15)  # 9:15 AM IST is 3:46 AM UTC, adjust as needed
     scheduler.start()
 
 # 2. Setup AI Infrastructure (Groq + LangGraph + MCP)

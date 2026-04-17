@@ -1,0 +1,31 @@
+name: Daily Options Selling Trade
+on:
+  schedule:
+    # Runs at 03:45 UTC (9:15 AM IST)
+    - cron: "45 3 * * 1-5"
+  workflow_dispatch: # Allows manual trigger for testing
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Run Trading Script
+        env:
+          ICICI_API_KEY: ${{ secrets.ICICI_API_KEY }}
+          ICICI_USER_ID: ${{ secrets.ICICI_USER_ID }}
+          ICICI_PASSWORD: ${{ secrets.ICICI_PASSWORD }}
+          ICICI_2FA_SECRET: ${{ secrets.ICICI_2FA_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --mode=automated
