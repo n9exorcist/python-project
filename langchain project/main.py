@@ -65,35 +65,60 @@ async def daily_trade_job():
     from app.db.database import db_session
 
     try:
-        # 1. Check for a manual session token first (Workaround for Cloud IP blocking)
+        # 1. Session Token Acquisition (Hybrid Logic)
+        # First, try to grab the manual token from GitHub Secrets/Env
         session_token = os.getenv("ICICI_SESSION_TOKEN")
         
-        if not session_token:
-            print("No manual token found. Attempting automated login...")
+        if session_token:
+            print(f"--- [AUTH] Using manual session token: {session_token[:5]}*** ---")
+        else:
+            print("--- [AUTH] No manual token found. Attempting automated cloud login... ---")
             session_token = await get_breeze_token()
 
         if not session_token:
-            send_telegram_msg("❌ ICICI Login Failed: No session token available.")
+            error_msg = "❌ ICICI Login Failed: No session token available (Cloud IP may be blocked)."
+            print(error_msg)
+            send_telegram_msg(error_msg)
             return
 
-        # Initialize ICICI Breeze with the token
-        breeze_client.generate_session(session_token)
+        # 2. Initialize ICICI Breeze Session
+        # We wrap this in a try to catch invalid/expired tokens immediately
+        try:
+            breeze_client.generate_session(session_token)
+            print("--- [AUTH] ICICI Breeze Session successfully initialized ---")
+        except Exception as auth_err:
+            send_telegram_msg(f"❌ ICICI Session Error: {str(auth_err)}")
+            return
         
-        # 2. Check Signal
+        # 3. Signal Check & Execution
+        # Ensure signal_svc is correctly initialized in the global scope
         signal = signal_svc.get_today_signal()
+        
         if signal:
+            print(f"--- [SIGNAL] Today's Signal: {signal} ---")
             status = strategy_svc.execute_logic(signal)
+            
+            # Commit the trade to your SQLite memory.db
             db_session.commit()
-            send_telegram_msg(f"🚀 Trade Executed!\nSignal: {signal}\nStatus: {status}")
+            
+            success_msg = f"🚀 Trade Executed!\nSignal: {signal}\nStatus: {status}"
+            print(success_msg)
+            send_telegram_msg(success_msg)
         else:
-            send_telegram_msg("🌙 No Options Selling signal for today.")
+            idle_msg = "🌙 No Options Selling signal for today. System remains in standby."
+            print(idle_msg)
+            send_telegram_msg(idle_msg)
             
     except Exception as e:
+        # Safety first: Rollback any partial DB writes if execution fails
         db_session.rollback()
-        send_telegram_msg(f"⚠️ Scheduler Error: {str(e)}")
+        error_report = f"⚠️ Scheduler Error: {str(e)}"
+        print(error_report)
+        send_telegram_msg(error_report)
     finally:
+        # Clean up the scoped session to prevent memory leaks in the background thread
         db_session.remove()
-
+        print("--- [SCHEDULER] Job Cycle Complete ---")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
