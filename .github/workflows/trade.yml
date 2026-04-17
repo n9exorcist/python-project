@@ -1,9 +1,8 @@
 name: Daily Options Selling Trade
 on:
   schedule:
-    # 9:15 AM IST is 03:45 UTC
     - cron: "45 3 * * 1-5"
-  workflow_dispatch: # This adds the "Run workflow" button
+  workflow_dispatch: 
 
 jobs:
   trade:
@@ -17,7 +16,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install -r "langchain project/requirements.txt"
           playwright install chromium --with-deps
 
       - name: Run Trading Script
@@ -30,4 +29,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
+        run: |
+          export PYTHONPATH="${PYTHONPATH}:$(pwd)/langchain project"
+          python "langchain project/main.py"
