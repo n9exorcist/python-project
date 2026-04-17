@@ -1,7 +1,6 @@
 name: Daily Options Selling Trade
 on:
   schedule:
-    # 9:15 AM IST is 03:45 UTC
     - cron: "45 3 * * 1-5"
   workflow_dispatch:
 
@@ -17,7 +16,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # We point to the subfolder for the requirements file
+          # Use quotes because of the space in the folder name
           pip install -r "langchain project/requirements.txt"
           playwright install chromium --with-deps
 
@@ -31,7 +30,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # We tell python to execute the main.py inside that specific folder
         run: |
+          # Set the path so Python can find your app/utils folders
           export PYTHONPATH="${PYTHONPATH}:$(pwd)/langchain project"
           python "langchain project/main.py"
