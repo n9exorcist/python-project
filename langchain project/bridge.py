@@ -15,6 +15,7 @@ REPO_NAME = "n9exorcist/python-project"
 SECRET_NAME = "ICICI_SESSION_TOKEN"
 
 def encrypt_secret(public_key: str, secret_value: str) -> str:
+    """GitHub requires secrets to be encrypted with their public key."""
     public_key_obj = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder)
     sealed_box = public.SealedBox(public_key_obj)
     encrypted = sealed_box.encrypt(secret_value.encode("utf-8"))
@@ -23,11 +24,11 @@ def encrypt_secret(public_key: str, secret_value: str) -> str:
 async def update_github_secret():
     print("--- [BRIDGE] Starting Morning Handshake... ---")
     
-    # 1. Get the Token locally (Indian IP)
+    # 1. Get the Token locally
     session_token = await get_breeze_token()
     
     if not session_token:
-        error_msg = "❌ BRIDGE FAILURE: Could not generate ICICI token locally."
+        error_msg = "❌ BRIDGE FAILURE: Check automation_failure.png"
         print(error_msg)
         send_telegram_msg(error_msg)
         return
@@ -55,11 +56,11 @@ async def update_github_secret():
         )
 
         if response_put.status_code in [201, 204]:
-            success_msg = f"✅ BRIDGE SUCCESS: {SECRET_NAME} is now live on GitHub!"
+            success_msg = f"✅ BRIDGE SUCCESS: GitHub Updated for {REPO_NAME}"
             print(success_msg)
             send_telegram_msg(success_msg)
         else:
-            fail_msg = f"❌ BRIDGE ERROR: GitHub rejected secret update: {response_put.text}"
+            fail_msg = f"❌ BRIDGE ERROR: GitHub Rejected Update: {response_put.text}"
             print(fail_msg)
             send_telegram_msg(fail_msg)
 
