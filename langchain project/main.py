@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv, find_dotenv
 from fastapi import FastAPI, Request
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.autopilot import send_telegram_msg, get_breeze_token
@@ -133,10 +133,13 @@ async def lifespan(app: FastAPI):
     init_db()
 
     # Start the Trading Scheduler
-    scheduler = BackgroundScheduler()
+    scheduler = AsyncIOScheduler()
     # Ensure timezone is specified if running on a remote server (e.g., timezone='Asia/Kolkata')
     scheduler.add_job(daily_trade_job, 'cron', day_of_week='mon-fri', hour=9, minute=15)  # 9:15 AM IST is 3:46 AM UTC, adjust as needed
     scheduler.start()
+
+    # Temporary test trigger
+    scheduler.add_job(daily_trade_job, 'date')
 
 # 2. Setup AI Infrastructure (Groq + LangGraph + MCP)
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as saver:
