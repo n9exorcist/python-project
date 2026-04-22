@@ -167,4 +167,14 @@ def market_analyst_persona(question: str) -> str:
     Use your tools to provide a professional and detailed response."""
 
 if __name__ == "__main__":
-    mcp.run()
+    import uvicorn
+    # Access the underlying Starlette app from the FastMCP object
+    # In some versions it's ._app, in others it's .app
+    server_app = getattr(mcp, "app", getattr(mcp, "_app", None))
+    
+    if server_app:
+        print("--- [MCP] Starting SSE Server on http://127.0.0.1:9001 ---")
+        uvicorn.run(server_app, host="127.0.0.1", port=9001)
+    else:
+        # If we can't find the app, run standard (but update main.py to 8000)
+        mcp.run(transport="sse")

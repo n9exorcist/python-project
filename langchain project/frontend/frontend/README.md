@@ -148,7 +148,7 @@ Terminal 1 — MCP Server
 powershell
 cd "C:\Users\narayanan.selvaraj\python project\langchain project"
 .\venv\Scripts\activate
-fastmcp run mcp_server.py --transport sse --host 127.0.0.1 --port 9001
+python mcp_server.py
 Terminal 2 — FastAPI Backend
 powershell
 cd "C:\Users\narayanan.selvaraj\python project\langchain project"

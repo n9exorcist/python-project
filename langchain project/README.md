@@ -414,7 +414,7 @@ EXECUTION:
 
 PS C:\Users\narayanan.selvaraj\python project\langchain project\frontend\frontend> npm start
 
-(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> fastmcp run mcp_market_scanner_server.py --transport sse --host 127.0.0.1 --port 9001
+(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> python mcp_server.py
 
 (venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 

@@ -157,7 +157,7 @@ async def lifespan(app: FastAPI):
             mcp_client = MultiServerMCPClient({
                 "market_tools": {
                     "transport": "sse",
-                    "url": "http://127.0.0.1:9001/sse"
+                   "url": "http://127.0.0.1:8000/sse"  # <--- Change this from 9001 to 8000
                 }
             })
 
@@ -232,8 +232,13 @@ RULES:
 - If the question is about Accenture Q2 2026, ensure you mention $18.0B revenue or $22.1B bookings if supported by retrieved context.
 - Keep answers concise, factual, and useful.
 """
+            # Check if tools loaded, otherwise fallback to base model
+            active_llm = llm_with_tools if llm_with_tools is not None else llm
 
-            response = await llm_with_tools.ainvoke(
+            if llm_with_tools is None:
+                print("--- [AI] WARNING: MCP tools not loaded. Answering without tools. ---")
+
+            response = await active_llm.ainvoke(
                 [SystemMessage(content=system_prompt)] + messages
             )
 
@@ -377,7 +382,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -471,9 +476,11 @@ async def chat_stream(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    # In the cloud, we don't need 'reload', locally we do.
+    
+    # Check if running in GitHub Cloud or Local
     is_cloud = os.getenv("GITHUB_ACTIONS") == "true"
     
+    # Force Port 8001 to match your React API_BASE
     uvicorn.run(
         "main:app", 
         host="0.0.0.0" if is_cloud else "127.0.0.1", 
