@@ -1,0 +1,3 @@
+echo "node_modules/" >> .codexignore
+echo "venv/" >> .codexignore
+echo ".git/" >> .codexignore
