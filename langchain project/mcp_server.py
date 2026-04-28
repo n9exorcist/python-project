@@ -151,31 +151,28 @@ def mcp_search_corporate_records(query: str) -> str:
         return f"Error searching local records: {e}"
 
 # --- UPDATED WEB SEARCH TOOL WITH ASYNC PROGRESS ---
+# --- CORRECTED WEB SEARCH TOOL ---
 @mcp.tool()
 async def mcp_search_the_web(query: str, ctx: Context) -> str: 
     """Searches the web for market data with real-time progress updates."""
     try:
-        # Step 1: Initialization
-        await ctx.report_progress(10, 100, status="Initializing Tavily search engine...")
+        # Change 'status' to 'message'
+        await ctx.report_progress(10, 100, message="Initializing Tavily search engine...")
         
-        # Step 2: The actual search 
-        # Note: Using .ainvoke() for proper async execution
-        await ctx.report_progress(30, 100, status=f"Searching web for: {query}...")
+        await ctx.report_progress(30, 100, message=f"Searching web for: {query}...")
         results = await web_search_tool.ainvoke({"query": query})
         
-        # Step 3: Processing
-        await ctx.report_progress(70, 100, status="Analyzing search results...")
+        await ctx.report_progress(70, 100, message="Analyzing search results...")
         
         if isinstance(results, list):
             output = "\n".join([res.get("content", str(res)) for res in results])
-            
-            # Final Step
-            await ctx.report_progress(100, 100, status="Web search complete.")
+            await ctx.report_progress(100, 100, message="Web search complete.")
             return output
             
         return str(results)
     except Exception as e:
-        await ctx.report_progress(100, 100, status="Search failed.")
+        # Ensure 'message' is used here as well
+        await ctx.report_progress(100, 100, message="Search failed.")
         return f"Error searching the web: {e}"
 
 @mcp.prompt()

@@ -183,14 +183,15 @@ function App() {
             }
 
             try {
+              // In your App.js stream processing logic
               const parsed = JSON.parse(dataStr);
 
-              // NEW: Catch Progress/Tool events from your FastAPI/LangGraph backend
-              if (parsed.status || parsed.tool_name) {
+              if (parsed.message || parsed.status) {
                 setProgress({
                   active: true,
                   value: parsed.progress_percentage || 50,
-                  status: parsed.status || `Using tool: ${parsed.tool_name}...`,
+                  // Try message first, then fallback to status
+                  status: parsed.message || parsed.status || "Processing...",
                 });
               }
 
