@@ -412,11 +412,11 @@ langgraph dev
 
 EXECUTION:
 
-PS C:\Users\narayanan.selvaraj\python project\langchain project\frontend\frontend> npm start
-
 (venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> python mcp_server.py
 
-(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> uvicorn main:app --host 127.0.0.1 --port 8001 --reload
+(venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> python main.py
+
+PS C:\Users\narayanan.selvaraj\python project\langchain project\frontend\frontend> npm start
 
 (venv) PS C:\Users\narayanan.selvaraj\python project\langchain project> langgraph dev
 

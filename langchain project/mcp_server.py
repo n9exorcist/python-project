@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime
 from dotenv import load_dotenv
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.tools.tavily_search import TavilySearchResults
@@ -150,14 +150,32 @@ def mcp_search_corporate_records(query: str) -> str:
     except Exception as e:
         return f"Error searching local records: {e}"
 
+# --- UPDATED WEB SEARCH TOOL WITH ASYNC PROGRESS ---
 @mcp.tool()
-def mcp_search_the_web(query: str) -> str:
+async def mcp_search_the_web(query: str, ctx: Context) -> str: 
+    """Searches the web for market data with real-time progress updates."""
     try:
-        results = web_search_tool.invoke({"query": query})
+        # Step 1: Initialization
+        await ctx.report_progress(10, 100, status="Initializing Tavily search engine...")
+        
+        # Step 2: The actual search 
+        # Note: Using .ainvoke() for proper async execution
+        await ctx.report_progress(30, 100, status=f"Searching web for: {query}...")
+        results = await web_search_tool.ainvoke({"query": query})
+        
+        # Step 3: Processing
+        await ctx.report_progress(70, 100, status="Analyzing search results...")
+        
         if isinstance(results, list):
-            return "\n".join([res.get("content", str(res)) for res in results])
+            output = "\n".join([res.get("content", str(res)) for res in results])
+            
+            # Final Step
+            await ctx.report_progress(100, 100, status="Web search complete.")
+            return output
+            
         return str(results)
     except Exception as e:
+        await ctx.report_progress(100, 100, status="Search failed.")
         return f"Error searching the web: {e}"
 
 @mcp.prompt()

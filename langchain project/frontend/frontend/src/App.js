@@ -35,6 +35,12 @@ const SUGGESTIONS = [
 
 function App() {
   const [input, setInput] = useState("");
+  // NEW: State for progress tracking
+  const [progress, setProgress] = useState({
+    active: false,
+    value: 0,
+    status: "",
+  });
   const { messages, isGenerating, threadId } = useSelector(
     (state) => state.chat,
   );
@@ -118,6 +124,13 @@ function App() {
     const userText = text.trim();
     setInput("");
 
+    // Start Progress UI
+    setProgress({
+      active: true,
+      value: 10,
+      status: "Initializing analyst tools...",
+    });
+
     dispatch(addUserMessage(userText));
     dispatch(addAiPlaceholder());
 
@@ -164,16 +177,31 @@ function App() {
             const dataStr = line.slice(6).trim();
 
             if (dataStr === "[DONE]") {
+              setProgress({ active: false, value: 100, status: "" });
               dispatch(finishGeneration());
               return;
             }
 
             try {
               const parsed = JSON.parse(dataStr);
+
+              // NEW: Catch Progress/Tool events from your FastAPI/LangGraph backend
+              if (parsed.status || parsed.tool_name) {
+                setProgress({
+                  active: true,
+                  value: parsed.progress_percentage || 50,
+                  status: parsed.status || `Using tool: ${parsed.tool_name}...`,
+                });
+              }
+
               if (parsed.text) {
+                // When actual text starts, hide progress
+                if (progress.active)
+                  setProgress((prev) => ({ ...prev, active: false }));
                 dispatch(appendChunkToLastMessage(parsed.text));
               }
             } catch (err) {
+              setProgress({ active: false, value: 0, status: "" });
               console.error("Error parsing JSON chunk:", err, dataStr);
             }
           }
@@ -359,12 +387,42 @@ function App() {
                         <div className="message-role">
                           {isUser ? "You" : "Market Analyst"}
                         </div>
+
                         <div className="message-text">
-                          {msg.text?.trim()
-                            ? msg.text
-                            : isLast && isGenerating
-                              ? "Thinking..."
-                              : ""}
+                          {msg.text?.trim() ? (
+                            msg.text
+                          ) : isLast && isGenerating ? (
+                            progress.active ? (
+                              /* UI Matching image_30e876.png */
+                              <div className="mcp-progress-card">
+                                <div className="mcp-header">
+                                  <span className="mcp-icon">🛠</span>
+                                  <span>
+                                    research <b>call</b>
+                                  </span>
+                                </div>
+                                <div className="mcp-progress-info">
+                                  <span>Progress</span>
+                                  <span>{progress.value}/100</span>
+                                </div>
+                                <div className="mcp-progress-bar">
+                                  <div
+                                    className="mcp-progress-fill"
+                                    style={{ width: `${progress.value}%` }}
+                                  />
+                                </div>
+                                <div className="mcp-console">
+                                  <p className="mcp-console-text">
+                                    {progress.status}
+                                  </p>
+                                </div>
+                              </div>
+                            ) : (
+                              "Thinking..."
+                            )
+                          ) : (
+                            ""
+                          )}
                         </div>
                       </div>
                     </div>

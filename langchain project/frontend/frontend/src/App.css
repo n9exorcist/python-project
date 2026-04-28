@@ -360,3 +360,56 @@ button {
     padding: 14px 16px 20px;
   }
 }
+
+.mcp-progress-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+  min-width: 300px;
+}
+
+.mcp-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #475569;
+  margin-bottom: 8px;
+}
+
+.mcp-progress-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.mcp-progress-bar {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mcp-progress-fill {
+  height: 100%;
+  background: #0f172a; /* Black bar per image_30e876.png */
+  transition: width 0.3s ease;
+}
+
+.mcp-console {
+  background: #0f172a; /* Dark console per image_30e876.png */
+  color: #38bdf8; /* Blue-ish terminal text */
+  padding: 8px;
+  border-radius: 4px;
+  margin-top: 10px;
+  font-family: "Courier New", monospace;
+  font-size: 0.8rem;
+}
+
+.mcp-console-text {
+  margin: 0;
+}
