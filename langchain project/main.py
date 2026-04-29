@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import asyncio
 from typing import Annotated, Literal, TypedDict
 from contextlib import asynccontextmanager
 
@@ -443,36 +444,74 @@ async def chat_stream(request: Request):
 
     async def event_generator():
         try:
-            await app_graph.ainvoke(
+            tool_progress_map = {
+                "mcp_search_the_web": [
+                    (10, "Initializing Tavily search engine..."),
+                    (30, "Sending query to the web..."),
+                    (70, "Analyzing search results..."),
+                    (90, "Preparing response..."),
+                ],
+                "mcp_search_corporate_records": [
+                    (10, "Opening FAISS index..."),
+                    (50, "Searching internal records..."),
+                    (90, "Retrieving documents..."),
+                ],
+                "mcp_read_signals_csv": [
+                    (20, "Reading signals.csv..."),
+                    (70, "Parsing candle data..."),
+                ],
+                "mcp_get_trade_history": [
+                    (20, "Connecting to memory.db..."),
+                    (70, "Querying trade history..."),
+                ],
+            }
+
+            async for event in app_graph.astream_events(
                 {"messages": [HumanMessage(content=user_message)]},
-                config
-            )
+                config,
+                version="v2",
+            ):
+                kind = event.get("event")
+                name = event.get("name", "")
 
-            state = await app_graph.aget_state(config)
-            final_text = ""
+                # ── Tool starts → emit fake progress ticks ──────────────
+                if kind == "on_tool_start":
+                    steps = tool_progress_map.get(name, [(20, f"Running {name}...")])
+                    for pct, msg in steps:
+                        yield f"data: {json.dumps({'progress_percentage': pct, 'message': msg})}\n\n"
+                        await asyncio.sleep(0.3)   # small delay so UI animates
 
-            if state and state.values:
-                final_text = state.values.get("final_answer", "")
+                # ── Tool ends → 100 % on that tool ──────────────────────
+                elif kind == "on_tool_end":
+                    yield f"data: {json.dumps({'progress_percentage': 100, 'message': f'{name} complete.'})}\n\n"
 
-                if not final_text:
-                    messages = state.values.get("messages", [])
-                    for msg in reversed(messages):
-                        if hasattr(msg, "type") and msg.type == "ai" and getattr(msg, "content", None):
-                            final_text = msg.content if isinstance(msg.content, str) else str(msg.content)
-                            break
-
-            if final_text:
-                yield f"data: {json.dumps({'text': final_text})}\n\n"
-            else:
-                yield f"data: {json.dumps({'text': '[No response generated]'})}\n\n"
+                # ── LLM streams a text chunk ─────────────────────────────
+                elif kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content"):
+                        content = chunk.content
+                        if isinstance(content, str) and content:
+                            yield f"data: {json.dumps({'text': content})}\n\n"
+                        elif isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    text = block.get("text", "")
+                                    if text:
+                                        yield f"data: {json.dumps({'text': text})}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'text': f'[Server error: {str(e)}]'})}\n\n"
 
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # critical for nginx proxies
+        },
+    )
 
 if __name__ == "__main__":
     import uvicorn

@@ -49,6 +49,14 @@ function App() {
   const abortControllerRef = useRef(null);
   const textareaRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  // At the top of your component, add this ref:
+  const progressRef = useRef({ active: false, value: 0, status: "" });
+
+  // Replace your setProgress calls with this helper:
+  const updateProgress = (newProgress) => {
+    progressRef.current = newProgress;
+    setProgress(newProgress);
+  };
 
   useEffect(() => {
     if (threadId) {
@@ -175,59 +183,84 @@ function App() {
             if (!line.startsWith("data: ")) continue;
 
             const dataStr = line.slice(6).trim();
+            if (!dataStr) continue;
 
             if (dataStr === "[DONE]") {
-              setProgress({ active: false, value: 100, status: "" });
+              updateProgress({ active: false, value: 100, status: "" });
               dispatch(finishGeneration());
               return;
             }
 
             try {
-              /// In your App.js stream processing logic
               const parsed = JSON.parse(dataStr);
 
-              if (parsed.message || parsed.status) {
-                setProgress({
+              // Progress event
+              if (
+                parsed.progress_percentage !== undefined ||
+                parsed.message ||
+                parsed.status
+              ) {
+                updateProgress({
                   active: true,
-                  value: parsed.progress_percentage || 50,
-                  // Try message first, then fallback to status
+                  value:
+                    parsed.progress_percentage ?? progressRef.current.value,
                   status: parsed.message || parsed.status || "Processing...",
                 });
               }
 
+              // Text chunk — hide progress bar using ref, not stale state
               if (parsed.text) {
-                // When actual text starts, hide progress
-                if (progress.active)
-                  setProgress((prev) => ({ ...prev, active: false }));
+                if (progressRef.current.active) {
+                  updateProgress({ active: false, value: 0, status: "" });
+                }
                 dispatch(appendChunkToLastMessage(parsed.text));
               }
             } catch (err) {
-              setProgress({ active: false, value: 0, status: "" });
+              // Don't reset progress on a parse error — just log it
               console.error("Error parsing JSON chunk:", err, dataStr);
             }
           }
         }
       }
 
+      // Flush any remaining buffer (handles server that doesn't end with \n\n)
       if (buffer.trim()) {
         const lines = buffer.split("\n");
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
 
           const dataStr = line.slice(6).trim();
+          if (!dataStr) continue;
 
           if (dataStr === "[DONE]") {
+            updateProgress({ active: false, value: 100, status: "" });
             dispatch(finishGeneration());
             return;
           }
 
           try {
             const parsed = JSON.parse(dataStr);
+
+            if (
+              parsed.progress_percentage !== undefined ||
+              parsed.message ||
+              parsed.status
+            ) {
+              updateProgress({
+                active: true,
+                value: parsed.progress_percentage ?? progressRef.current.value,
+                status: parsed.message || parsed.status || "Processing...",
+              });
+            }
+
             if (parsed.text) {
+              if (progressRef.current.active) {
+                updateProgress({ active: false, value: 0, status: "" });
+              }
               dispatch(appendChunkToLastMessage(parsed.text));
             }
           } catch (err) {
-            console.error("Error parsing final JSON chunk:", err, dataStr);
+            console.error("Error parsing final chunk:", err, dataStr);
           }
         }
       }
