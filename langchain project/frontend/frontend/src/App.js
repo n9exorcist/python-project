@@ -212,17 +212,17 @@ function App() {
 
               // Text chunk — hide progress bar using ref, not stale state
               if (parsed.text) {
-  if (progressRef.current.active) {
-    setTimeout(() => setProgressFading(true), 1000);   // start fade at 1s
-    setTimeout(() => {
-      updateProgress({ active: false, value: 0, status: "" });
-      setProgressFading(false);
-    }, 1400);                                            // remove card at 1.4s
-  }
-  if (parsed.text.trim()) {
-    dispatch(appendChunkToLastMessage(parsed.text));
-  }
-}
+                if (progressRef.current.active) {
+                  setTimeout(() => setProgressFading(true), 1000); // start fade at 1s
+                  setTimeout(() => {
+                    updateProgress({ active: false, value: 0, status: "" });
+                    setProgressFading(false);
+                  }, 1400); // remove card at 1.4s
+                }
+                if (parsed.text.trim()) {
+                  dispatch(appendChunkToLastMessage(parsed.text));
+                }
+              }
             } catch (err) {
               // Don't reset progress on a parse error — just log it
               console.error("Error parsing JSON chunk:", err, dataStr);
@@ -261,18 +261,18 @@ function App() {
               });
             }
 
-          if (parsed.text) {
-            if (progressRef.current.active) {
-              setTimeout(() => setProgressFading(true), 1000); // start fade at 1s
-              setTimeout(() => {
-                updateProgress({ active: false, value: 0, status: "" });
-                setProgressFading(false);
-              }, 1400); // remove card at 1.4s
+            if (parsed.text) {
+              if (progressRef.current.active) {
+                setTimeout(() => setProgressFading(true), 1000); // start fade at 1s
+                setTimeout(() => {
+                  updateProgress({ active: false, value: 0, status: "" });
+                  setProgressFading(false);
+                }, 1400); // remove card at 1.4s
+              }
+              if (parsed.text.trim()) {
+                dispatch(appendChunkToLastMessage(parsed.text));
+              }
             }
-            if (parsed.text.trim()) {
-              dispatch(appendChunkToLastMessage(parsed.text));
-            }
-          }
           } catch (err) {
             console.error("Error parsing final chunk:", err, dataStr);
           }
