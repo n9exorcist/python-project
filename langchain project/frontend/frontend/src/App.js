@@ -228,7 +228,7 @@ function App() {
                 dispatch(
                   setProgress({
                     active: true,
-                    value: parsed.progress_percentage ?? progress.value,
+                    value: parsed.progress_percentage ?? 0,
                     status: parsed.message || parsed.status || "Processing...",
                   }),
                 );
@@ -293,7 +293,7 @@ function App() {
               dispatch(
                 setProgress({
                   active: true,
-                  value: parsed.progress_percentage ?? progress.value,
+                  value: parsed.progress_percentage ?? 0,
                   status: parsed.message || parsed.status || "Processing...",
                 }),
               );

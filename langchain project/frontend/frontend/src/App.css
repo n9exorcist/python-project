@@ -364,19 +364,33 @@ button {
 .mcp-progress-card {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 12px; /* Slightly rounder to match your theme */
   padding: 12px;
-  margin-top: 8px;
-  min-width: 300px;
-  /* Add these two lines */
-  transition: opacity 0.4s ease-out;
+  margin-top: 12px;
+  min-width: 320px;
+
+  /* Transition both opacity and height for a smooth collapse */
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease,
+    max-height 0.4s ease,
+    margin 0.4s ease;
   opacity: 1;
+  max-height: 200px; /* Large enough to fit content */
+  overflow: hidden;
+  transform: translateY(0);
 }
 
+/* This state triggers when Redux sets fading: true */
 .mcp-progress-card.hiding {
   opacity: 0;
+  max-height: 0;
+  margin-top: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  transform: translateY(-10px);
+  pointer-events: none; /* Prevent interaction while fading */
 }
-
 .mcp-header {
   display: flex;
   align-items: center;
@@ -408,15 +422,28 @@ button {
 }
 
 .mcp-console {
-  background: #0f172a; /* Dark console per image_30e876.png */
-  color: #38bdf8; /* Blue-ish terminal text */
-  padding: 8px;
-  border-radius: 4px;
+  background: #0f172a;
+  color: #38bdf8;
+  padding: 10px;
+  border-radius: 6px;
   margin-top: 10px;
-  font-family: "Courier New", monospace;
-  font-size: 0.8rem;
+  font-family:
+    "JetBrains Mono", "Fira Code", monospace; /* Added modern mono fonts */
+  font-size: 0.75rem;
+  line-height: 1.4;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .mcp-console-text {
   margin: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Subtle prompt character for the console */
+.mcp-console-text::before {
+  content: ">_";
+  margin-right: 8px;
+  opacity: 0.6;
 }

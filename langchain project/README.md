@@ -12,6 +12,7 @@ This project has four main parts:
 - `mcp_server.py` exposes MCP tools for searching local corporate records and the web.
 - `main.py` runs a FastAPI app that uses LangGraph + Groq to route, validate, and write final answers.
 - `studio_graph.py` exposes the same graph flow for use with `langgraph dev`.
+- (venv) PS C:\Users\narayanan.selvaraj\python project> codex
 
 ---
 
@@ -426,6 +427,15 @@ PS C:\Users\narayanan.selvaraj\python project\langchain project\frontend\fronten
    The router looks for: "internal", "records", "document", "faiss", "local"
 
 Prompt A (Testing personal data): > "According to our internal records, who is Narayanan Selvaraj and what does he specialize in?"
+
+{
+"messages": [
+{
+"role": "user",
+"content": "According to our internal records, who is Narayanan Selvaraj and what does he specialize in?"
+}
+]
+}
 
 Expected: It should route to local, call mcp_search_corporate_records, find the manual doc, and tell you he is a Team Lead at Accenture specializing in Full-Stack LLM and ReactJS.
 
