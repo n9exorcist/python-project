@@ -1,0 +1,1914 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LangChain · LangGraph · MCP Explainer</title>
+    <style>
+      /* CSS Variables for Theme */
+      :root {
+        --bg-base: #0a0f1a;
+        --bg-sidebar: #050a12;
+        --bg-card: #0f172a;
+        --bg-highlight: #1e293b;
+
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --text-dim: #64748b;
+        --text-dark: #475569;
+        --text-code: #86efac;
+
+        --border-color: #1e293b;
+        --border-card: #334155;
+
+        /* Section Colors */
+        --color-langchain: #22c55e;
+        --color-langgraph: #6366f1;
+        --color-mcp: #f59e0b;
+        --color-mcp-custom: #ec4899;
+        --color-architecture: #06b6d4;
+        --color-transports: #a855f7;
+        --color-together: #f97316;
+      }
+
+      /* Base Reset & Typography */
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background-color: var(--bg-base);
+        color: var(--text-main);
+        font-family: "Courier New", Courier, monospace;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        line-height: 1.7;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.4;
+      }
+      p {
+        color: var(--text-muted);
+        margin-bottom: 1rem;
+      }
+
+      pre {
+        font-size: 0.72rem;
+        margin: 0;
+        overflow-x: auto;
+      }
+
+      code {
+        font-family: "Courier New", Courier, monospace;
+      }
+
+      /* Layout Components */
+      .app-header {
+        padding: 1.25rem 2rem 1rem;
+        border-bottom: 1px solid var(--border-color);
+        background-color: var(--bg-sidebar);
+      }
+
+      .header-title {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.2rem;
+      }
+
+      .header-title h1 {
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+
+      .badge {
+        background-color: var(--bg-highlight);
+        color: var(--text-dim);
+        font-size: 0.62rem;
+        padding: 2px 8px;
+        border-radius: 4px;
+      }
+
+      .header-subtitle {
+        color: var(--text-dark);
+        font-size: 0.72rem;
+      }
+
+      .app-body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+
+      /* Sidebar Navigation */
+      .sidebar {
+        width: 200px;
+        flex-shrink: 0;
+        border-right: 1px solid var(--border-color);
+        padding: 0.75rem 0.6rem;
+        overflow-y: auto;
+        background-color: var(--bg-sidebar);
+      }
+
+      .nav-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        padding: 0.55rem 0.7rem;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        background: transparent;
+        border-left: 3px solid transparent;
+        color: var(--text-dark);
+        text-align: left;
+        font-size: 0.72rem;
+        margin-bottom: 0.2rem;
+        font-family: inherit;
+        transition: all 0.2s ease;
+      }
+
+      .nav-btn:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+      }
+
+      .nav-btn .emoji {
+        flex-shrink: 0;
+        font-size: 1rem;
+      }
+
+      /* Active States for Nav Buttons */
+      .nav-btn.active[data-target="langchain"] {
+        background: rgba(34, 197, 94, 0.09);
+        border-left-color: var(--color-langchain);
+        color: var(--text-main);
+      }
+      .nav-btn.active[data-target="langgraph"] {
+        background: rgba(99, 102, 241, 0.09);
+        border-left-color: var(--color-langgraph);
+        color: var(--text-main);
+      }
+      .nav-btn.active[data-target="mcp-what"] {
+        background: rgba(245, 158, 11, 0.09);
+        border-left-color: var(--color-mcp);
+        color: var(--text-main);
+      }
+      .nav-btn.active[data-target="mcp-custom"] {
+        background: rgba(236, 72, 153, 0.09);
+        border-left-color: var(--color-mcp-custom);
+        color: var(--text-main);
+      }
+      .nav-btn.active[data-target="mcp-architecture"] {
+        background: rgba(6, 182, 212, 0.09);
+        border-left-color: var(--color-architecture);
+        color: var(--text-main);
+      }
+      .nav-btn.active[data-target="mcp-transports"] {
+        background: rgba(168, 85, 247, 0.09);
+        border-left-color: var(--color-transports);
+        color: var(--text-main);
+      }
+      .nav-btn.active[data-target="how-together"] {
+        background: rgba(249, 115, 22, 0.09);
+        border-left-color: var(--color-together);
+        color: var(--text-main);
+      }
+
+      /* Main Content Area */
+      .content-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.5rem 2rem;
+      }
+
+      .content-section {
+        display: none;
+      }
+
+      .content-section.active {
+        display: block;
+        animation: fadeIn 0.3s ease-in-out;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(5px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .section-header .emoji {
+        font-size: 1.6rem;
+      }
+      .section-header h2 {
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      /* Reusable UI Components */
+      .code-box {
+        background: var(--bg-card);
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .code-box.red-border {
+        border: 1px solid var(--border-card);
+      }
+      .code-box.green-border {
+        border: 1px solid var(--color-langchain);
+      }
+      .code-box.indigo-border {
+        border: 1px solid var(--color-langgraph);
+      }
+      .code-box.pink-border {
+        border: 1px solid var(--color-mcp-custom);
+      }
+      .code-box.cyan-border {
+        border: 1px solid var(--border-card);
+      }
+      .code-box.purple-border {
+        border: 1px solid var(--border-card);
+      }
+
+      .code-title {
+        font-size: 0.75rem;
+        margin-bottom: 0.5rem;
+        font-weight: 700;
+      }
+      .code-title.red {
+        color: #f87171;
+      }
+      .code-title.green {
+        color: #86efac;
+      }
+      .code-title.indigo {
+        color: var(--color-langgraph);
+      }
+      .code-title.pink {
+        color: #f9a8d4;
+      }
+      .code-title.cyan {
+        color: var(--text-muted);
+      }
+      .code-title.purple {
+        color: var(--color-transports);
+      }
+
+      .code-text {
+        color: var(--text-code);
+      }
+      .code-text.muted {
+        color: var(--text-muted);
+      }
+
+      .grid-container {
+        display: grid;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .grid-col-2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .grid-col-3 {
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+      }
+      .grid-col-3-even {
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 0.75rem;
+      }
+
+      .list-item {
+        background: var(--bg-highlight);
+        border-radius: 6px;
+        padding: 0.6rem 0.85rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .list-item-title {
+        color: var(--text-code);
+        font-size: 0.77rem;
+        font-family: monospace;
+      }
+
+      .list-item-desc {
+        color: var(--text-dim);
+        font-size: 0.72rem;
+        margin-top: 2px;
+      }
+
+      .list-item-meta {
+        color: var(--border-card);
+        font-size: 0.65rem;
+        font-family: monospace;
+        white-space: nowrap;
+      }
+
+      .feature-card {
+        background: var(--bg-highlight);
+        border-radius: 6px;
+        padding: 0.7rem 0.85rem;
+      }
+
+      .feature-card.indigo-left {
+        border-left: 3px solid var(--color-langgraph);
+      }
+      .feature-card.orange-left {
+        border-left: 3px solid var(--color-mcp);
+      }
+
+      .feature-title {
+        font-weight: 600;
+        font-size: 0.8rem;
+        margin-bottom: 0.2rem;
+      }
+      .feature-title.indigo {
+        color: #a5b4fc;
+      }
+
+      .feature-desc {
+        color: var(--text-dim);
+        font-size: 0.75rem;
+        line-height: 1.5;
+      }
+
+      .summary-box {
+        background: var(--bg-highlight);
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .summary-title {
+        font-weight: 700;
+        font-size: 0.8rem;
+        margin-bottom: 0.4rem;
+      }
+
+      .summary-text {
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        line-height: 1.6;
+      }
+      .summary-text strong {
+        color: var(--text-main);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-title">
+        <span style="font-size: 1.4rem">🧠</span>
+        <h1>LangChain · LangGraph · MCP</h1>
+        <span class="badge">deep dive</span>
+      </div>
+      <p class="header-subtitle" style="margin: 0">
+        What each library does, why client-server, custom vs pre-built tools
+      </p>
+    </header>
+
+    <div class="app-body">
+      <nav class="sidebar">
+        <button class="nav-btn active" data-target="langchain">
+          <span class="emoji">⛓️</span>
+          <span>LangChain</span>
+        </button>
+        <button class="nav-btn" data-target="langgraph">
+          <span class="emoji">🕸️</span>
+          <span>LangGraph</span>
+        </button>
+        <button class="nav-btn" data-target="mcp-what">
+          <span class="emoji">🔌</span>
+          <span>MCP</span>
+        </button>
+        <button class="nav-btn" data-target="mcp-custom">
+          <span class="emoji">🛠️</span>
+          <span>Custom vs Pre-built MCP</span>
+        </button>
+        <button class="nav-btn" data-target="mcp-architecture">
+          <span class="emoji">🏗️</span>
+          <span>Why Client-Server?</span>
+        </button>
+        <button class="nav-btn" data-target="mcp-transports">
+          <span class="emoji">🚌</span>
+          <span>SSE vs stdio</span>
+        </button>
+        <button class="nav-btn" data-target="how-together">
+          <span class="emoji">🧩</span>
+          <span>How They Work Together</span>
+        </button>
+      </nav>
+
+      <main class="content-area">
+        <section id="langchain" class="content-section active">
+          <div class="section-header">
+            <span class="emoji">⛓️</span>
+            <h2 style="color: var(--color-langchain)">
+              LangChain — What Problem Does It Solve?
+            </h2>
+          </div>
+
+          <p>Without LangChain, calling an LLM + tools looks like this mess:</p>
+
+          <div class="code-box red-border">
+            <div class="code-title red">WITHOUT LangChain (raw code):</div>
+            <pre class="code-text muted">
+# 1. Call Groq API manually
+import requests
+res = requests.post("https://api.groq.com/v1/chat", 
+    headers={"Authorization": f"Bearer {key}"},
+    json={"model":"llama-3.3", "messages":[...]}
+)
+
+# 2. Parse response manually
+text = res.json()["choices"][0]["message"]["content"]
+
+# 3. Check if it wants to call a tool — write this yourself
+if '"tool_call"' in text:
+    tool_name = parse_tool_name(text)  # write this yourself
+    tool_result = call_tool(tool_name) # write this yourself
+    # call LLM again with tool result...
+    # handle errors yourself, retries yourself, history yourself...</pre
+            >
+          </div>
+
+          <div class="code-box green-border">
+            <div class="code-title green">WITH LangChain (your code):</div>
+            <pre class="code-text">
+from langchain_groq import ChatGroq
+
+llm = ChatGroq(model_name="llama-3.3-70b-versatile", api_key=groq_key)
+llm_with_tools = llm.bind_tools(mcp_tools)  # that's it!
+
+# LangChain handles:
+# Auth headers, request/response format, tool call parsing,
+# message history format, retry logic, streaming —
+# AND it works the same way for OpenAI, Groq, Gemini, Ollama</pre
+            >
+          </div>
+
+          <div style="margin-bottom: 1rem">
+            <div
+              style="
+                color: var(--color-langchain);
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+                font-size: 0.9rem;
+              "
+            >
+              What LangChain gives you (used in your code):
+            </div>
+            <div class="grid-container">
+              <div class="list-item">
+                <div>
+                  <code class="list-item-title">ChatGroq</code>
+                  <div class="list-item-desc">
+                    Wrapper so you call Groq same way as OpenAI/Gemini
+                  </div>
+                </div>
+                <span class="list-item-meta">main.py</span>
+              </div>
+              <div class="list-item">
+                <div>
+                  <code class="list-item-title"
+                    >SystemMessage / HumanMessage</code
+                  >
+                  <div class="list-item-desc">
+                    Typed message objects instead of raw dicts
+                  </div>
+                </div>
+                <span class="list-item-meta">main.py</span>
+              </div>
+              <div class="list-item">
+                <div>
+                  <code class="list-item-title">llm.bind_tools()</code>
+                  <div class="list-item-desc">
+                    Attaches MCP tools to LLM so it knows what it can call
+                  </div>
+                </div>
+                <span class="list-item-meta">main.py</span>
+              </div>
+              <div class="list-item">
+                <div>
+                  <code class="list-item-title"
+                    >FAISS (langchain_community)</code
+                  >
+                  <div class="list-item-desc">
+                    Vector store wrapper with .from_documents() and
+                    .as_retriever()
+                  </div>
+                </div>
+                <span class="list-item-meta">ingest.py + mcp_server.py</span>
+              </div>
+              <div class="list-item">
+                <div>
+                  <code class="list-item-title">PyPDFLoader / CSVLoader</code>
+                  <div class="list-item-desc">
+                    File loaders that return Document objects
+                  </div>
+                </div>
+                <span class="list-item-meta">ingest.py</span>
+              </div>
+              <div class="list-item">
+                <div>
+                  <code class="list-item-title"
+                    >RecursiveCharacterTextSplitter</code
+                  >
+                  <div class="list-item-desc">
+                    Smart chunking that respects sentence/paragraph boundaries
+                  </div>
+                </div>
+                <span class="list-item-meta">ingest.py</span>
+              </div>
+              <div class="list-item">
+                <div>
+                  <code class="list-item-title">TavilySearchResults</code>
+                  <div class="list-item-desc">
+                    Web search tool wrapped as a LangChain tool
+                  </div>
+                </div>
+                <span class="list-item-meta">mcp_server.py</span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="summary-box"
+            style="border: 1px solid var(--color-langchain)"
+          >
+            <div class="summary-title" style="color: var(--color-langchain)">
+              One-line summary:
+            </div>
+            <div class="summary-text">
+              LangChain = <strong>utility belt</strong> of wrappers and
+              abstractions. It does not run your logic — it gives you clean,
+              unified interfaces to LLMs, vector stores, document loaders, and
+              tools.
+            </div>
+          </div>
+        </section>
+
+        <section id="langgraph" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🕸️</span>
+            <h2 style="color: var(--color-langgraph)">
+              LangGraph — Why a Graph? Why Not Just Call LLM Directly?
+            </h2>
+          </div>
+
+          <p>
+            LangGraph is for when your AI needs to make
+            <strong>decisions, loops, and branches</strong> — not just one call
+            and done.
+          </p>
+
+          <div class="code-box cyan-border">
+            <div class="code-title cyan" style="margin-bottom: 0.75rem">
+              YOUR EXACT GRAPH from main.py:
+            </div>
+            <pre class="code-text muted" style="line-height: 1.9">
+START
+  |
+  v
+[router_node] -- Reads user message, decides: "local" / "web" / "hybrid"
+  |
+  v
+[agent_node] -- LLM looks at message + routing hint, decides which tool to call
+  |
+  +-- wants to call a tool? ---> [tools node] -- Actually calls MCP tool
+  |                                   |
+  |                                   v
+  |                            [validator_node] -- Was the tool result good?
+  |                                   |
+  |                           bad? ---+ retry --> back to [agent_node]  <- LOOP!
+  |                           good? -->
+  |
+  v
+[writer_node] -- LLM writes clean final answer using retrieved context
+  |
+  v
+END</pre
+            >
+          </div>
+
+          <div style="margin-bottom: 1rem">
+            <div
+              style="
+                color: var(--color-langgraph);
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+              "
+            >
+              Why you cannot do this without LangGraph:
+            </div>
+            <div class="grid-container">
+              <div class="feature-card indigo-left">
+                <div class="feature-title indigo">Loops</div>
+                <div class="feature-desc">
+                  The validator can send execution BACK to the agent. Pure
+                  Python while-loops do not have checkpointing or state
+                  persistence.
+                </div>
+              </div>
+              <div class="feature-card indigo-left">
+                <div class="feature-title indigo">
+                  Shared state across nodes
+                </div>
+                <div class="feature-desc">
+                  Each node (router, agent, validator, writer) shares a typed
+                  GraphState dict. No global variables needed.
+                </div>
+              </div>
+              <div class="feature-card indigo-left">
+                <div class="feature-title indigo">Checkpointing</div>
+                <div class="feature-desc">
+                  AsyncSqliteSaver saves the full conversation state to SQLite
+                  after each step. If the server crashes mid-conversation, it
+                  resumes.
+                </div>
+              </div>
+              <div class="feature-card indigo-left">
+                <div class="feature-title indigo">Streaming</div>
+                <div class="feature-desc">
+                  LangGraph streams partial results. Your /chat/stream endpoint
+                  works because of this.
+                </div>
+              </div>
+              <div class="feature-card indigo-left">
+                <div class="feature-title indigo">Conditional edges</div>
+                <div class="feature-desc">
+                  'If agent called a tool go to tools node. Otherwise go to
+                  validator.' Clean branching without spaghetti if/else.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="code-box indigo-border">
+            <div class="code-title indigo">
+              KEY CODE from main.py explained:
+            </div>
+            <pre class="code-text">
+# Define state shape (shared between ALL nodes)
+class GraphState(TypedDict):
+    messages: list         # full conversation history
+    route: str             # "local" / "web" / "hybrid"
+    validation_status: str # "ok" / "retry" / "fallback"
+    retry_count: int       # how many retries so far
+    final_answer: str      # the clean final response
+
+# Conditional edges = routing between nodes based on state
+graph_builder.add_conditional_edges(
+    "agent",
+    route_after_agent,        # function that inspects state
+    {"tools": "tools",        # returns "tools" -> go to tools node
+     "validator": "validator"} # returns "validator" -> skip tools
+)
+
+# Compile with checkpointer = auto-save to SQLite after each step
+app_graph = graph_builder.compile(checkpointer=db_saver)</pre
+            >
+          </div>
+
+          <div
+            class="summary-box"
+            style="border: 1px solid var(--color-langgraph)"
+          >
+            <div class="summary-title" style="color: var(--color-langgraph)">
+              One-line summary:
+            </div>
+            <div class="summary-text">
+              LangGraph = <strong>state machine for AI</strong>. It lets your AI
+              loop, branch, retry, and remember — things a simple LLM call
+              cannot do.
+            </div>
+          </div>
+        </section>
+
+        <section id="mcp-what" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🔌</span>
+            <h2 style="color: var(--color-mcp)">MCP — What Is It Really?</h2>
+          </div>
+
+          <p>
+            MCP stands for <strong>Model Context Protocol</strong>. It is a
+            standard made by Anthropic for how AI models should talk to external
+            tools and data sources.
+          </p>
+
+          <div class="code-box" style="border: 1px solid var(--color-mcp)">
+            <div
+              style="
+                color: #fbbf24;
+                font-weight: 700;
+                font-size: 0.85rem;
+                margin-bottom: 0.75rem;
+              "
+            >
+              The analogy that makes it click:
+            </div>
+            <div class="grid-container grid-col-3" style="font-size: 0.8rem">
+              <div
+                style="
+                  background: var(--bg-base);
+                  border-radius: 6px;
+                  padding: 0.75rem;
+                  text-align: center;
+                "
+              >
+                <div style="font-size: 1.5rem; margin-bottom: 0.25rem">🌐</div>
+                <div style="color: var(--text-muted)">
+                  HTTP is the standard for how browsers talk to servers
+                </div>
+              </div>
+              <div
+                style="
+                  color: var(--color-mcp);
+                  font-weight: 700;
+                  text-align: center;
+                  padding: 0.5rem;
+                  font-size: 0.75rem;
+                "
+              >
+                MCP is like HTTP but for AI tools
+              </div>
+              <div
+                style="
+                  background: var(--bg-base);
+                  border-radius: 6px;
+                  padding: 0.75rem;
+                  text-align: center;
+                "
+              >
+                <div style="font-size: 1.5rem; margin-bottom: 0.25rem">🤖</div>
+                <div style="color: var(--text-muted)">
+                  MCP is the standard for how AI models talk to tools
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p>
+            Before MCP, every AI tool integration was custom glue code. MCP
+            standardizes it so
+            <strong
+              >any MCP-compatible AI can use any MCP-compatible tool</strong
+            >.
+          </p>
+
+          <div style="margin-bottom: 1rem">
+            <div
+              style="
+                color: var(--color-mcp);
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+              "
+            >
+              Three things an MCP server can expose:
+            </div>
+            <div class="grid-container">
+              <div class="feature-card orange-left" style="padding: 0.85rem">
+                <div
+                  style="
+                    display: flex;
+                    gap: 0.5rem;
+                    align-items: center;
+                    margin-bottom: 0.35rem;
+                  "
+                >
+                  <span>🔧</span>
+                  <code
+                    style="
+                      color: #fbbf24;
+                      font-family: monospace;
+                      font-size: 0.8rem;
+                    "
+                    >@mcp.tool()</code
+                  >
+                </div>
+                <div class="feature-desc" style="margin-bottom: 0.35rem">
+                  Functions the AI can call to DO things (search, query DB, call
+                  API). Your code uses these.
+                </div>
+                <code
+                  style="
+                    color: var(--text-dim);
+                    font-family: monospace;
+                    font-size: 0.68rem;
+                  "
+                  >mcp_search_corporate_records(), mcp_get_trade_history()</code
+                >
+              </div>
+              <div class="feature-card orange-left" style="padding: 0.85rem">
+                <div
+                  style="
+                    display: flex;
+                    gap: 0.5rem;
+                    align-items: center;
+                    margin-bottom: 0.35rem;
+                  "
+                >
+                  <span>📦</span>
+                  <code
+                    style="
+                      color: #fbbf24;
+                      font-family: monospace;
+                      font-size: 0.8rem;
+                    "
+                    >@mcp.resource()</code
+                  >
+                </div>
+                <div class="feature-desc" style="margin-bottom: 0.35rem">
+                  Read-only data the AI can access (like a file or URL). Your
+                  code has one.
+                </div>
+                <code
+                  style="
+                    color: var(--text-dim);
+                    font-family: monospace;
+                    font-size: 0.68rem;
+                  "
+                  >market://cycles -> returns market cycle text</code
+                >
+              </div>
+              <div class="feature-card orange-left" style="padding: 0.85rem">
+                <div
+                  style="
+                    display: flex;
+                    gap: 0.5rem;
+                    align-items: center;
+                    margin-bottom: 0.35rem;
+                  "
+                >
+                  <span>💬</span>
+                  <code
+                    style="
+                      color: #fbbf24;
+                      font-family: monospace;
+                      font-size: 0.8rem;
+                    "
+                    >@mcp.prompt()</code
+                  >
+                </div>
+                <div class="feature-desc" style="margin-bottom: 0.35rem">
+                  Reusable prompt templates the AI can use.
+                </div>
+                <code
+                  style="
+                    color: var(--text-dim);
+                    font-family: monospace;
+                    font-size: 0.68rem;
+                  "
+                  >market_analyst_persona(question)</code
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="mcp-custom" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🛠️</span>
+            <h2 style="color: var(--color-mcp-custom)">
+              Custom vs Pre-built MCP Tools — Where to Find Them
+            </h2>
+          </div>
+
+          <p>
+            Yes — the tools in your
+            <code
+              style="
+                color: #f9a8d4;
+                background: var(--bg-base);
+                padding: 2px 5px;
+                border-radius: 4px;
+                font-size: 0.8rem;
+              "
+              >mcp_server.py</code
+            >
+            are <strong>100% custom</strong> tools you wrote. But there is a
+            whole registry of pre-built ones.
+          </p>
+
+          <div class="code-box pink-border">
+            <div class="code-title pink">
+              Your custom tools (mcp_server.py):
+            </div>
+            <pre class="code-text">
+@mcp.tool()
+def mcp_read_signals_csv(date: str) -> str:
+    # YOUR business logic: reads YOUR signals.csv file
+
+@mcp.tool()
+def mcp_get_trade_history(date: str) -> str:
+    # YOUR business logic: queries YOUR memory.db SQLite
+
+@mcp.tool()
+def mcp_search_corporate_records(query: str) -> str:
+    # YOUR business logic: searches YOUR FAISS vector index
+
+@mcp.tool()
+def mcp_search_the_web(query: str) -> str:
+    # Wraps Tavily — but YOU decide how to expose it</pre
+            >
+          </div>
+
+          <div
+            style="
+              color: var(--color-mcp-custom);
+              font-weight: 700;
+              margin-bottom: 0.75rem;
+            "
+          >
+            Where to find pre-built MCP servers:
+          </div>
+          <div class="grid-container" style="margin-bottom: 1rem">
+            <div class="list-item">
+              <div>
+                <code
+                  style="
+                    color: #f9a8d4;
+                    font-size: 0.75rem;
+                    font-family: monospace;
+                  "
+                  >github.com/modelcontextprotocol/servers</code
+                >
+                <div class="list-item-desc">
+                  Official MCP repo — filesystem, git, postgres, sqlite,
+                  brave-search, fetch, memory
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--bg-highlight);
+                  border: 1px solid var(--color-mcp-custom);
+                  color: #f9a8d4;
+                  font-size: 0.6rem;
+                  padding: 2px 7px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Official</span
+              >
+            </div>
+            <div class="list-item">
+              <div>
+                <code
+                  style="
+                    color: #f9a8d4;
+                    font-size: 0.75rem;
+                    font-family: monospace;
+                  "
+                  >mcp.so</code
+                >
+                <div class="list-item-desc">
+                  Community directory of 1000+ MCP servers. Like npm for AI
+                  tools.
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--bg-highlight);
+                  border: 1px solid var(--color-mcp-custom);
+                  color: #f9a8d4;
+                  font-size: 0.6rem;
+                  padding: 2px 7px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Directory</span
+              >
+            </div>
+            <div class="list-item">
+              <div>
+                <code
+                  style="
+                    color: #f9a8d4;
+                    font-size: 0.75rem;
+                    font-family: monospace;
+                  "
+                  >github.com/punkpeye/awesome-mcp-servers</code
+                >
+                <div class="list-item-desc">
+                  Curated list: GitHub, Slack, Gmail, Notion, Linear, Jira,
+                  Stripe, Shopify...
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--bg-highlight);
+                  border: 1px solid var(--color-mcp-custom);
+                  color: #f9a8d4;
+                  font-size: 0.6rem;
+                  padding: 2px 7px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Curated</span
+              >
+            </div>
+            <div class="list-item">
+              <div>
+                <code
+                  style="
+                    color: #f9a8d4;
+                    font-size: 0.75rem;
+                    font-family: monospace;
+                  "
+                  >Cursor / Claude Desktop settings</code
+                >
+                <div class="list-item-desc">
+                  One-click install of community servers from inside the app
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--bg-highlight);
+                  border: 1px solid var(--color-mcp-custom);
+                  color: #f9a8d4;
+                  font-size: 0.6rem;
+                  padding: 2px 7px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >GUI</span
+              >
+            </div>
+          </div>
+
+          <div
+            style="
+              color: var(--color-mcp-custom);
+              font-weight: 700;
+              margin-bottom: 0.75rem;
+            "
+          >
+            Popular ready-made MCP servers you can plug in:
+          </div>
+          <div class="grid-container grid-col-2">
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">📁</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                Filesystem — read/write local files
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">🗄️</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                SQLite — query any SQLite DB
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">🐙</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                GitHub — repos, issues, PRs
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">🐘</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                Postgres — query PostgreSQL
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">🔍</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                Brave Search — web search
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">📝</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                Notion — read/write pages
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">💬</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                Slack — send/read messages
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 6px;
+                padding: 0.6rem 0.75rem;
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+              "
+            >
+              <span style="font-size: 1.1rem; flex-shrink: 0">📧</span>
+              <div style="color: var(--text-muted); font-size: 0.73rem">
+                Gmail — read/send email
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="mcp-architecture" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🏗️</span>
+            <h2 style="color: var(--color-architecture)">
+              Why Client-Server Architecture for MCP?
+            </h2>
+          </div>
+
+          <p>
+            This is the most important conceptual question. The answer is
+            <strong>isolation, security, and reusability</strong>.
+          </p>
+
+          <div class="code-box cyan-border">
+            <div class="code-title cyan">YOUR EXACT SETUP:</div>
+            <pre class="code-text muted" style="line-height: 1.9">
++-----------------------------------------------------+
+|                 YOUR MACHINE                        |
+|                                                     |
+|  +----------------------+  HTTP/SSE  +------------+ |
+|  | main.py (port 8001)  | <--------- |            | |
+|  |                      |            |  MCP       | |
+|  | FastAPI + LangGraph  | ---------> | Server     | |
+|  | + MultiServerMCP     | tool calls | (port 8000)| |
+|  |   Client             |            |            | |
+|  +----------------------+            +------------+ |
+|        MCP CLIENT                  MCP SERVER       |
+|                                                     |
+|  React Frontend (port 3000)                         |
++-----------------------------------------------------+</pre
+            >
+          </div>
+
+          <div style="margin-bottom: 1.25rem">
+            <div
+              style="
+                color: var(--color-architecture);
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+              "
+            >
+              5 Reasons why it is client-server (not just a function import):
+            </div>
+            <div class="grid-container">
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 8px;
+                  overflow: hidden;
+                  border: 1px solid #164e63;
+                "
+              >
+                <div
+                  style="
+                    padding: 0.7rem 0.85rem;
+                    border-bottom: 1px solid #0c4a6e;
+                  "
+                >
+                  <div
+                    style="
+                      color: #67e8f9;
+                      font-weight: 600;
+                      font-size: 0.82rem;
+                      margin-bottom: 0.2rem;
+                    "
+                  >
+                    1. Language independence
+                  </div>
+                  <div
+                    style="
+                      color: var(--text-dim);
+                      font-size: 0.75rem;
+                      line-height: 1.5;
+                    "
+                  >
+                    Your main app is Python. But an MCP server could be Node.js,
+                    Go, Rust — anything. The LLM does not care. It just sends
+                    HTTP calls.
+                  </div>
+                </div>
+                <pre
+                  style="
+                    margin: 0;
+                    padding: 0.7rem 0.85rem;
+                    color: var(--text-code);
+                    font-size: 0.68rem;
+                    line-height: 1.6;
+                    background: #0c1a2e;
+                  "
+                >
+// MCP server in Node.js — works with your Python main.py
+const server = new McpServer({ name: "mytools" });
+server.tool("get_price", ..., () => fetchStockPrice());</pre
+                >
+              </div>
+
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 8px;
+                  overflow: hidden;
+                  border: 1px solid #164e63;
+                "
+              >
+                <div
+                  style="
+                    padding: 0.7rem 0.85rem;
+                    border-bottom: 1px solid #0c4a6e;
+                  "
+                >
+                  <div
+                    style="
+                      color: #67e8f9;
+                      font-weight: 600;
+                      font-size: 0.82rem;
+                      margin-bottom: 0.2rem;
+                    "
+                  >
+                    2. Process isolation
+                  </div>
+                  <div
+                    style="
+                      color: var(--text-dim);
+                      font-size: 0.75rem;
+                      line-height: 1.5;
+                    "
+                  >
+                    If the MCP server crashes (e.g., FAISS blows up), your main
+                    FastAPI app keeps running. The tool just returns an error,
+                    your validator retries.
+                  </div>
+                </div>
+                <pre
+                  style="
+                    margin: 0;
+                    padding: 0.7rem 0.85rem;
+                    color: var(--text-code);
+                    font-size: 0.68rem;
+                    line-height: 1.6;
+                    background: #0c1a2e;
+                  "
+                >
+# In your code — if MCP server is down:
+try:
+    mcp_tools = await mcp_client.get_tools()
+except Exception as e:
+    mcp_tools = []  # graceful fallback, app still works</pre
+                >
+              </div>
+
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 8px;
+                  overflow: hidden;
+                  border: 1px solid #164e63;
+                "
+              >
+                <div
+                  style="
+                    padding: 0.7rem 0.85rem;
+                    border-bottom: 1px solid #0c4a6e;
+                  "
+                >
+                  <div
+                    style="
+                      color: #67e8f9;
+                      font-weight: 600;
+                      font-size: 0.82rem;
+                      margin-bottom: 0.2rem;
+                    "
+                  >
+                    3. Run tools remotely
+                  </div>
+                  <div
+                    style="
+                      color: var(--text-dim);
+                      font-size: 0.75rem;
+                      line-height: 1.5;
+                    "
+                  >
+                    The MCP server does not need to be on the same machine. Your
+                    main app on Render, MCP server on Railway — no problem.
+                  </div>
+                </div>
+                <pre
+                  style="
+                    margin: 0;
+                    padding: 0.7rem 0.85rem;
+                    color: var(--text-code);
+                    font-size: 0.68rem;
+                    line-height: 1.6;
+                    background: #0c1a2e;
+                  "
+                >
+# MultiServerMCPClient supports remote URLs:
+mcp_client = MultiServerMCPClient({
+    "market_tools": {
+        "transport": "sse",
+        "url": "https://my-mcp-server.railway.app/sse"
+    }
+})</pre
+                >
+              </div>
+
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 8px;
+                  overflow: hidden;
+                  border: 1px solid #164e63;
+                "
+              >
+                <div
+                  style="
+                    padding: 0.7rem 0.85rem;
+                    border-bottom: 1px solid #0c4a6e;
+                  "
+                >
+                  <div
+                    style="
+                      color: #67e8f9;
+                      font-weight: 600;
+                      font-size: 0.82rem;
+                      margin-bottom: 0.2rem;
+                    "
+                  >
+                    4. Reuse across multiple AI apps
+                  </div>
+                  <div
+                    style="
+                      color: var(--text-dim);
+                      font-size: 0.75rem;
+                      line-height: 1.5;
+                    "
+                  >
+                    Once you build your MCP server, ANY AI app (Claude Desktop,
+                    Cursor, your other projects) can connect to it. Build once,
+                    use everywhere.
+                  </div>
+                </div>
+                <pre
+                  style="
+                    margin: 0;
+                    padding: 0.7rem 0.85rem;
+                    color: var(--text-code);
+                    font-size: 0.68rem;
+                    line-height: 1.6;
+                    background: #0c1a2e;
+                  "
+                >
+# Same MCP server used by different clients:
+# Claude Desktop -> connects to your mcp_server.py
+# Cursor IDE     -> connects to your mcp_server.py
+# Your main.py   -> connects to your mcp_server.py</pre
+                >
+              </div>
+
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 8px;
+                  overflow: hidden;
+                  border: 1px solid #164e63;
+                "
+              >
+                <div
+                  style="
+                    padding: 0.7rem 0.85rem;
+                    border-bottom: 1px solid #0c4a6e;
+                  "
+                >
+                  <div
+                    style="
+                      color: #67e8f9;
+                      font-weight: 600;
+                      font-size: 0.82rem;
+                      margin-bottom: 0.2rem;
+                    "
+                  >
+                    5. Security boundary
+                  </div>
+                  <div
+                    style="
+                      color: var(--text-dim);
+                      font-size: 0.75rem;
+                      line-height: 1.5;
+                    "
+                  >
+                    The MCP server controls exactly what the AI can access. The
+                    AI cannot directly import your DB or filesystem — it can
+                    ONLY call what you exposed via @mcp.tool().
+                  </div>
+                </div>
+                <pre
+                  style="
+                    margin: 0;
+                    padding: 0.7rem 0.85rem;
+                    color: var(--text-code);
+                    font-size: 0.68rem;
+                    line-height: 1.6;
+                    background: #0c1a2e;
+                  "
+                >
+# AI can only do what you explicitly expose:
+@mcp.tool()
+def mcp_get_trade_history(date: str) -> str: ...
+# AI CANNOT: directly import sqlite3 and run DROP TABLE
+# AI CANNOT: read your .env file
+# AI CANNOT: access anything not in an @mcp.tool()</pre
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="mcp-transports" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🚌</span>
+            <h2 style="color: var(--color-transports)">
+              SSE vs stdio — MCP Transport Types
+            </h2>
+          </div>
+
+          <p>
+            MCP servers can communicate two ways. Your code uses
+            <strong>SSE</strong>.
+          </p>
+
+          <div
+            class="grid-container grid-col-2"
+            style="gap: 1rem; margin-bottom: 1.25rem"
+          >
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 10px;
+                padding: 1.25rem;
+                border: 1px solid #7c3aed;
+              "
+            >
+              <div
+                style="color: #a78bfa; font-weight: 700; margin-bottom: 0.5rem"
+              >
+                SSE (Server-Sent Events)
+              </div>
+              <div
+                style="
+                  color: var(--text-dim);
+                  font-size: 0.73rem;
+                  margin-bottom: 0.75rem;
+                "
+              >
+                Used in your code
+              </div>
+              <div
+                style="
+                  color: var(--text-muted);
+                  font-size: 0.78rem;
+                  line-height: 1.7;
+                "
+              >
+                MCP server runs as an HTTP server.<br />
+                Client connects over the network.<br />
+                Works across machines / Docker / cloud.<br /><br />
+                <span style="color: var(--text-code)">Remote-ready</span><br />
+                <span style="color: var(--text-code)"
+                  >Multiple clients can connect</span
+                ><br />
+                <span style="color: #f87171"
+                  >Needs a running server process</span
+                >
+              </div>
+              <div
+                style="
+                  margin-top: 0.75rem;
+                  background: var(--bg-card);
+                  border-radius: 6px;
+                  padding: 0.6rem;
+                "
+              >
+                <code style="color: #c4b5fd; font-size: 0.68rem"
+                  >url: 'http://127.0.0.1:8000/sse'</code
+                >
+              </div>
+            </div>
+
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 10px;
+                padding: 1.25rem;
+                border: 1px solid var(--border-card);
+              "
+            >
+              <div
+                style="
+                  color: var(--text-main);
+                  font-weight: 700;
+                  margin-bottom: 0.5rem;
+                "
+              >
+                stdio (Standard I/O)
+              </div>
+              <div
+                style="
+                  color: var(--text-dim);
+                  font-size: 0.73rem;
+                  margin-bottom: 0.75rem;
+                "
+              >
+                Used by Claude Desktop, Cursor
+              </div>
+              <div
+                style="
+                  color: var(--text-muted);
+                  font-size: 0.78rem;
+                  line-height: 1.7;
+                "
+              >
+                MCP server is a subprocess.<br />
+                Client spawns it and pipes stdin/stdout.<br />
+                No HTTP, no ports, just text in/out.<br /><br />
+                <span style="color: var(--text-code)"
+                  >Simple, no network needed</span
+                ><br />
+                <span style="color: var(--text-code)"
+                  >Used by Claude Desktop apps</span
+                ><br />
+                <span style="color: #f87171"
+                  >Local only, one client at a time</span
+                >
+              </div>
+              <div
+                style="
+                  margin-top: 0.75rem;
+                  background: var(--bg-card);
+                  border-radius: 6px;
+                  padding: 0.6rem;
+                "
+              >
+                <code style="color: var(--text-muted); font-size: 0.68rem"
+                  >command: 'python mcp_server.py'</code
+                >
+              </div>
+            </div>
+          </div>
+
+          <div class="code-box purple-border">
+            <div class="code-title purple">
+              Claude Desktop uses stdio — this is how it connects to your MCP
+              server:
+            </div>
+            <pre class="code-text">
+// ~/.claude/claude_desktop_config.json
+{
+  "mcpServers": {
+    "market-analyst": {
+      "command": "python",
+      "args": ["/path/to/your/mcp_server.py"],
+      "transport": "stdio"
+    }
+  }
+}</pre
+            >
+          </div>
+
+          <div
+            class="summary-box"
+            style="border: 1px solid var(--color-transports)"
+          >
+            <div class="summary-title" style="color: var(--color-transports)">
+              Quick decision guide:
+            </div>
+            <div class="summary-text">
+              Building a web app (like yours)? Use <strong>SSE</strong><br />
+              Building a Claude Desktop or Cursor plugin? Use
+              <strong>stdio</strong><br />
+              Want both? FastMCP supports both from the same server
+            </div>
+          </div>
+        </section>
+
+        <section id="how-together" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🧩</span>
+            <h2 style="color: var(--color-together)">
+              How LangChain + LangGraph + MCP Work Together
+            </h2>
+          </div>
+
+          <p>
+            They each solve a different layer of the problem. Here is the
+            complete picture:
+          </p>
+
+          <div
+            class="code-box cyan-border"
+            style="padding: 1.25rem; margin-bottom: 1.25rem"
+          >
+            <pre class="code-text muted" style="line-height: 2">
+USER: "What signal was there on April 17?"
+
++---------------------------------------------------------------+
+|  LANGGRAPH (the brain / orchestrator)                         |
+|                                                               |
+|  1. router_node: "This is a local query"                      |
+|  2. agent_node: LLM sees query + system prompt                |
+|     +-- decides: "I should call mcp_read_signals_csv"         |
+|  3. tools_node: -----> sends tool call to MCP SERVER          |
+|                                                               |
+|  +----------------------------------------------------------+  |
+|  |  MCP SERVER (the hands / tool executor)                  |  |
+|  |                                                          |  |
+|  |  receives: mcp_read_signals_csv(date="17-04-2026")       |  |
+|  |  runs:     opens signals.csv, finds row, returns result  |  |
+|  |  returns:  "Candle Signal: Green, Bias: BULLISH"         |  |
+|  +----------------------------------------------------------+  |
+|                                                               |
+|  4. validator_node: "Result looks good, proceed"              |
+|  5. writer_node: LLM writes clean answer using result         |
++---------------------------------------------------------------+
+
+LANGCHAIN (the connectors) used throughout:
+  ChatGroq wrapper  -> calls Groq API for the LLM steps
+  llm.bind_tools()  -> tells LLM about the MCP tools
+  SystemMessage     -> formats prompts correctly
+  FAISS wrapper     -> powers the vector search in MCP server
+
+FINAL ANSWER: "On April 17, 2026, the signal was Green (Bullish).
+               Recommended strategy: Sell Put / Buy Call."</pre
+            >
+          </div>
+
+          <div
+            class="grid-container grid-col-3-even"
+            style="margin-bottom: 1rem"
+          >
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 1rem;
+                border: 1px solid var(--color-langchain);
+                text-align: center;
+              "
+            >
+              <div
+                style="
+                  color: var(--color-langchain);
+                  font-weight: 700;
+                  font-size: 0.9rem;
+                  margin-bottom: 0.3rem;
+                "
+              >
+                LangChain
+              </div>
+              <div
+                style="
+                  color: var(--text-main);
+                  font-size: 0.75rem;
+                  margin-bottom: 0.4rem;
+                "
+              >
+                Connectors & Wrappers
+              </div>
+              <div
+                style="
+                  color: var(--text-dim);
+                  font-size: 0.7rem;
+                  font-style: italic;
+                "
+              >
+                The cables and adapters
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 1rem;
+                border: 1px solid var(--color-langgraph);
+                text-align: center;
+              "
+            >
+              <div
+                style="
+                  color: var(--color-langgraph);
+                  font-weight: 700;
+                  font-size: 0.9rem;
+                  margin-bottom: 0.3rem;
+                "
+              >
+                LangGraph
+              </div>
+              <div
+                style="
+                  color: var(--text-main);
+                  font-size: 0.75rem;
+                  margin-bottom: 0.4rem;
+                "
+              >
+                Orchestrator & Flow
+              </div>
+              <div
+                style="
+                  color: var(--text-dim);
+                  font-size: 0.7rem;
+                  font-style: italic;
+                "
+              >
+                The project manager
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 1rem;
+                border: 1px solid var(--color-mcp);
+                text-align: center;
+              "
+            >
+              <div
+                style="
+                  color: var(--color-mcp);
+                  font-weight: 700;
+                  font-size: 0.9rem;
+                  margin-bottom: 0.3rem;
+                "
+              >
+                MCP
+              </div>
+              <div
+                style="
+                  color: var(--text-main);
+                  font-size: 0.75rem;
+                  margin-bottom: 0.4rem;
+                "
+              >
+                Tool Protocol & Executor
+              </div>
+              <div
+                style="
+                  color: var(--text-dim);
+                  font-size: 0.7rem;
+                  font-style: italic;
+                "
+              >
+                The worker with tools
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="summary-box"
+            style="border: 1px solid var(--color-together)"
+          >
+            <div class="summary-title" style="color: #fb923c">
+              Could you replace any of them?
+            </div>
+            <div
+              class="grid-container"
+              style="
+                gap: 0.4rem;
+                font-size: 0.78rem;
+                color: var(--text-muted);
+                line-height: 1.6;
+              "
+            >
+              <div>
+                <strong>Replace LangChain?</strong> Yes — use raw Groq SDK plus
+                numpy. More code but doable.
+              </div>
+              <div>
+                <strong>Replace LangGraph?</strong> Yes — use a while loop plus
+                if/else. But you lose checkpointing, streaming, and clean state
+                management.
+              </div>
+              <div>
+                <strong>Replace MCP?</strong> Yes — just import the functions
+                directly. But you lose isolation, reusability, and ability to
+                connect Claude Desktop.
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      // Simple JavaScript to handle the tab navigation
+      document.addEventListener("DOMContentLoaded", () => {
+        const navButtons = document.querySelectorAll(".nav-btn");
+        const contentSections = document.querySelectorAll(".content-section");
+
+        navButtons.forEach((button) => {
+          button.addEventListener("click", () => {
+            // Remove active class from all buttons and sections
+            navButtons.forEach((btn) => btn.classList.remove("active"));
+            contentSections.forEach((sec) => sec.classList.remove("active"));
+
+            // Add active class to clicked button
+            button.classList.add("active");
+
+            // Show corresponding section
+            const targetId = button.getAttribute("data-target");
+            const targetSection = document.getElementById(targetId);
+            if (targetSection) {
+              targetSection.classList.add("active");
+            }
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

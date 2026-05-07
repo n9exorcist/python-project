@@ -1,0 +1,1548 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAG Deep Dive Explainer</title>
+    <style>
+      /* Theme Variables */
+      :root {
+        --bg-base: #0f172a;
+        --bg-sidebar: #080f1a;
+        --bg-highlight: #1e293b;
+
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --text-dim: #64748b;
+        --text-dark: #475569;
+        --text-code: #86efac;
+
+        --border-color: #1e293b;
+        --border-card: #334155;
+
+        /* Section Specific Colors */
+        --color-llm: #f97316;
+        --color-overview: #6366f1;
+        --color-embeddings: #10b981;
+        --color-chunking: #ec4899;
+        --color-vectordb: #f59e0b;
+        --color-topk: #8b5cf6;
+        --color-code: #06b6d4;
+        --color-types: #14b8a6;
+      }
+
+      /* Reset & Typography */
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background-color: var(--bg-base);
+        color: var(--text-main);
+        font-family: "Courier New", Courier, monospace;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        line-height: 1.7;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.4;
+      }
+      p {
+        color: var(--text-muted);
+        margin-bottom: 1rem;
+      }
+      em {
+        font-style: italic;
+      }
+      strong {
+        color: var(--text-main);
+        font-weight: 700;
+      }
+
+      pre {
+        font-size: 0.75rem;
+        margin: 0;
+        overflow-x: auto;
+      }
+      code {
+        font-family: "Courier New", Courier, monospace;
+      }
+
+      /* App Layout */
+      .app-header {
+        padding: 1.5rem 2rem 1rem;
+        border-bottom: 1px solid var(--border-color);
+        background-color: var(--bg-sidebar);
+      }
+
+      .header-title {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.25rem;
+      }
+      .header-title h1 {
+        font-size: 1.25rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+
+      .badge-sub {
+        background: var(--bg-highlight);
+        color: var(--text-dim);
+        font-size: 0.65rem;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-family: monospace;
+      }
+
+      .app-body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+
+      /* Sidebar Navigation */
+      .sidebar {
+        width: 220px;
+        flex-shrink: 0;
+        border-right: 1px solid var(--border-color);
+        padding: 0.75rem;
+        overflow-y: auto;
+        background-color: var(--bg-sidebar);
+      }
+
+      .nav-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        padding: 0.6rem 0.75rem;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        background: transparent;
+        border-left: 3px solid transparent;
+        color: var(--text-dim);
+        text-align: left;
+        font-size: 0.75rem;
+        margin-bottom: 0.25rem;
+        font-family: inherit;
+        transition: all 0.15s ease;
+        line-height: 1.3;
+      }
+
+      .nav-btn:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+      }
+      .nav-btn .emoji {
+        flex-shrink: 0;
+        font-size: 1.1rem;
+      }
+
+      /* Dynamic Nav Active States */
+      .nav-btn.active {
+        color: var(--text-main);
+      }
+      .nav-btn.active[data-target="why-llm"] {
+        background: rgba(249, 115, 22, 0.13);
+        border-left-color: var(--color-llm);
+      }
+      .nav-btn.active[data-target="overview"] {
+        background: rgba(99, 102, 241, 0.13);
+        border-left-color: var(--color-overview);
+      }
+      .nav-btn.active[data-target="embeddings"] {
+        background: rgba(16, 185, 129, 0.13);
+        border-left-color: var(--color-embeddings);
+      }
+      .nav-btn.active[data-target="chunking"] {
+        background: rgba(236, 72, 153, 0.13);
+        border-left-color: var(--color-chunking);
+      }
+      .nav-btn.active[data-target="vectordb"] {
+        background: rgba(245, 158, 11, 0.13);
+        border-left-color: var(--color-vectordb);
+      }
+      .nav-btn.active[data-target="topk"] {
+        background: rgba(139, 92, 246, 0.13);
+        border-left-color: var(--color-topk);
+      }
+      .nav-btn.active[data-target="code"] {
+        background: rgba(6, 182, 212, 0.13);
+        border-left-color: var(--color-code);
+      }
+      .nav-btn.active[data-target="rag-types"] {
+        background: rgba(20, 184, 166, 0.13);
+        border-left-color: var(--color-types);
+      }
+
+      /* Content Area */
+      .content-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.5rem 2rem;
+      }
+
+      .content-section {
+        display: none;
+        animation: fadeIn 0.3s ease-in-out;
+      }
+      .content-section.active {
+        display: block;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1.25rem;
+      }
+      .section-header .emoji {
+        font-size: 1.75rem;
+      }
+      .section-header h2 {
+        font-size: 1.1rem;
+        font-weight: 700;
+      }
+
+      /* Reusable UI Utilities */
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+      }
+      .grid-stack {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .icon-card {
+        background: var(--bg-highlight);
+        padding: 0.75rem;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+      }
+      .icon-card span:last-child {
+        color: var(--text-muted);
+      }
+
+      .code-box {
+        background: var(--bg-base);
+        border-radius: 8px;
+        padding: 1rem;
+        border: 1px solid var(--border-card);
+      }
+
+      .panel {
+        background: var(--bg-highlight);
+        border-radius: 10px;
+        padding: 1.25rem;
+      }
+
+      .panel-title {
+        font-weight: 700;
+        margin-bottom: 0.75rem;
+        font-size: 1rem;
+      }
+      .panel-subtitle {
+        color: var(--text-dim);
+        font-size: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .num-step {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.82rem;
+      }
+      .num-circle {
+        border-radius: 50%;
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.65rem;
+        flex-shrink: 0;
+        color: #fff;
+      }
+
+      .list-row {
+        background: var(--bg-highlight);
+        border-radius: 6px;
+        padding: 0.6rem 0.85rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .inline-code {
+        background: var(--bg-base);
+        padding: 2px 6px;
+        border-radius: 4px;
+        color: var(--text-code);
+      }
+
+      .tag {
+        font-size: 0.6rem;
+        padding: 1px 5px;
+        border-radius: 3px;
+        margin-left: 6px;
+        color: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-title">
+        <span style="font-size: 1.5rem">🧠</span>
+        <h1>RAG Deep Dive</h1>
+        <span class="badge-sub">for novice devs</span>
+      </div>
+      <p style="margin: 0; font-size: 0.75rem">
+        How your Market Analyst AI actually works — embeddings, chunking, vector
+        DBs & more
+      </p>
+    </header>
+
+    <div class="app-body">
+      <nav class="sidebar">
+        <button class="nav-btn active" data-target="why-llm">
+          <span class="emoji">🤔</span>
+          <span>Why Not Just Read a File Directly?</span>
+        </button>
+        <button class="nav-btn" data-target="overview">
+          <span class="emoji">🗺️</span>
+          <span>The Full RAG Pipeline</span>
+        </button>
+        <button class="nav-btn" data-target="embeddings">
+          <span class="emoji">🔢</span>
+          <span>What ARE Embeddings?</span>
+        </button>
+        <button class="nav-btn" data-target="chunking">
+          <span class="emoji">✂️</span>
+          <span>Chunking</span>
+        </button>
+        <button class="nav-btn" data-target="vectordb">
+          <span class="emoji">🗄️</span>
+          <span>Vector Database</span>
+        </button>
+        <button class="nav-btn" data-target="topk">
+          <span class="emoji">🎯</span>
+          <span>What is top-k?</span>
+        </button>
+        <button class="nav-btn" data-target="code">
+          <span class="emoji">💻</span>
+          <span>Code Walkthrough</span>
+        </button>
+        <button class="nav-btn" data-target="rag-types">
+          <span class="emoji">📚</span>
+          <span>Types of RAG</span>
+        </button>
+      </nav>
+
+      <main class="content-area">
+        <section id="why-llm" class="content-section active">
+          <div class="section-header">
+            <span class="emoji">🤔</span>
+            <h2 style="color: var(--color-llm)">
+              Why Not Just Read a File Directly?
+            </h2>
+          </div>
+
+          <p>
+            Great question. You <em>can</em> read a key-value file directly —
+            and for tiny datasets, you should! But imagine your "file" is
+            actually:
+          </p>
+
+          <div class="grid-2" style="margin-bottom: 1rem">
+            <div class="icon-card">
+              <span style="font-size: 1.5rem">📄</span
+              ><span>500-page PDF earnings report</span>
+            </div>
+            <div class="icon-card">
+              <span style="font-size: 1.5rem">🗄️</span
+              ><span>10,000 rows of trade records</span>
+            </div>
+            <div class="icon-card">
+              <span style="font-size: 1.5rem">📰</span
+              ><span>100 news articles from the web</span>
+            </div>
+            <div class="icon-card">
+              <span style="font-size: 1.5rem">📊</span
+              ><span>Mixed PDFs, CSVs, Excel files</span>
+            </div>
+          </div>
+
+          <p>
+            You
+            <strong style="color: var(--text-main)"
+              >can't dump all of that into a prompt</strong
+            >
+            — LLMs have token limits (typically 8k–128k tokens). RAG solves this
+            by
+            <strong style="color: var(--color-llm)"
+              >fetching only the relevant parts</strong
+            >
+            before sending to the LLM.
+          </p>
+
+          <div class="code-box" style="margin-top: 1rem">
+            <div
+              style="
+                color: var(--color-llm);
+                font-family: monospace;
+                font-size: 0.85rem;
+                margin-bottom: 0.5rem;
+              "
+            >
+              // Key-Value (works fine when small)
+            </div>
+            <pre style="color: var(--text-code); font-size: 0.8rem">
+const data = {AAPL: 182.3, MSFT: 420.1};
+console.log(data['AAPL']); // ✅ instant, no AI needed</pre
+            >
+
+            <div
+              style="
+                color: var(--color-llm);
+                font-family: monospace;
+                font-size: 0.85rem;
+                margin-top: 1rem;
+                margin-bottom: 0.5rem;
+              "
+            >
+              // RAG (needed when data is large & semantic)
+            </div>
+            <pre style="color: var(--text-code); font-size: 0.8rem">
+query = 'What was Accenture revenue last quarter?'
+// → searches 500 docs → finds 3 relevant chunks
+// → sends only those 3 chunks to the LLM 🎯</pre
+            >
+          </div>
+        </section>
+
+        <section id="overview" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🗺️</span>
+            <h2 style="color: var(--color-overview)">
+              The Full RAG Pipeline — Bird's Eye View
+            </h2>
+          </div>
+
+          <p style="margin-bottom: 1.5rem">
+            RAG has two completely separate phases. Most confusion comes from
+            mixing them up.
+          </p>
+
+          <div class="grid-2" style="gap: 1rem">
+            <div class="panel" style="border: 1px solid #7c3aed">
+              <div class="panel-title" style="color: #a78bfa">
+                📦 PHASE 1: Indexing
+              </div>
+              <div class="panel-subtitle">(happens ONCE, offline)</div>
+              <div class="num-step" style="color: #c4b5fd">
+                <span class="num-circle" style="background: #7c3aed">1</span
+                >Read your files (PDF, CSV, Excel)
+              </div>
+              <div class="num-step" style="color: #c4b5fd">
+                <span class="num-circle" style="background: #7c3aed">2</span
+                >Split into chunks
+              </div>
+              <div class="num-step" style="color: #c4b5fd">
+                <span class="num-circle" style="background: #7c3aed">3</span
+                >Convert chunks to numbers (embeddings)
+              </div>
+              <div class="num-step" style="color: #c4b5fd">
+                <span class="num-circle" style="background: #7c3aed">4</span
+                >Store numbers in Vector DB
+              </div>
+            </div>
+
+            <div class="panel" style="border: 1px solid #0891b2">
+              <div class="panel-title" style="color: #67e8f9">
+                🔍 PHASE 2: Retrieval
+              </div>
+              <div class="panel-subtitle">(happens on EVERY query)</div>
+              <div class="num-step" style="color: #a5f3fc">
+                <span class="num-circle" style="background: #0891b2">1</span
+                >User asks a question
+              </div>
+              <div class="num-step" style="color: #a5f3fc">
+                <span class="num-circle" style="background: #0891b2">2</span
+                >Convert question to numbers too
+              </div>
+              <div class="num-step" style="color: #a5f3fc">
+                <span class="num-circle" style="background: #0891b2">3</span
+                >Find closest numbers in DB
+              </div>
+              <div class="num-step" style="color: #a5f3fc">
+                <span class="num-circle" style="background: #0891b2">4</span
+                >Send top-k chunks + question to LLM
+              </div>
+            </div>
+          </div>
+
+          <div class="code-box" style="margin-top: 1.25rem">
+            <div
+              style="
+                color: var(--text-dim);
+                font-size: 0.75rem;
+                margin-bottom: 0.5rem;
+              "
+            >
+              MERMAID FLOW
+            </div>
+            <pre style="color: var(--text-code); line-height: 1.6">
+Files (PDF/CSV/Excel)
+      │
+      ▼
+  [Chunking] ─── Split into small pieces (500-1000 chars)
+      │
+      ▼
+  [Embeddings] ── Each chunk → [0.12, -0.87, 0.45, ...] (vector)
+      │
+      ▼
+  [FAISS/Pinecone] ── Store all vectors in Vector DB
+      
+  ════════════════ QUERY TIME ════════════════
+  
+  User: "What was Accenture Q2 revenue?"
+      │
+      ▼
+  [Embed Query] ── Question → [0.11, -0.91, 0.42, ...]
+      │
+      ▼
+  [Vector Search] ── Find top-k nearest vectors (k=5 in your code)
+      │
+      ▼
+  [Retrieved Chunks] ── "$18.0B revenue, 8% increase..."
+      │
+      ▼
+  [LLM Prompt] ── "Given this context: {chunks}, answer: {question}"
+      │
+      ▼
+  [Answer] ── "Accenture's Q2 FY26 revenue was $18.0 billion"</pre
+            >
+          </div>
+        </section>
+
+        <section id="embeddings" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🔢</span>
+            <h2 style="color: var(--color-embeddings)">
+              What ARE Embeddings? (Simply Explained)
+            </h2>
+          </div>
+
+          <p>
+            An embedding is just a
+            <strong>list of floating point numbers</strong> that captures the
+            "meaning" of text. Similar meaning = similar numbers. This is the
+            magic.
+          </p>
+
+          <div class="code-box" style="margin-bottom: 1rem">
+            <pre
+              style="
+                color: var(--text-code);
+                font-size: 0.78rem;
+                line-height: 1.8;
+              "
+            >
+"Accenture Q2 revenue $18 billion"
+→ [0.12, -0.87, 0.45, 0.33, 0.91, -0.22, ...] (1536 numbers)
+
+"What were Accenture's Q2 earnings?"  
+→ [0.11, -0.91, 0.42, 0.35, 0.88, -0.19, ...] (very similar!)
+
+"My cat likes fish"
+→ [0.88, 0.22, -0.67, -0.11, 0.03, 0.55, ...] (very different!)</pre
+            >
+          </div>
+
+          <div style="margin-bottom: 1rem">
+            <div
+              style="
+                color: var(--color-embeddings);
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+              "
+            >
+              Available Embedding Models (your code uses Gemini):
+            </div>
+            <div class="grid-stack">
+              <div class="list-row">
+                <div>
+                  <span style="font-size: 0.8rem"
+                    >Google Gemini gemini-embedding-001</span
+                  >
+                  <span class="tag" style="background: var(--color-embeddings)"
+                    >YOUR CODE</span
+                  >
+                </div>
+                <div style="display: flex; gap: 0.5rem; font-size: 0.72rem">
+                  <span style="color: var(--text-dim)">3072d</span
+                  ><span style="color: var(--color-llm)">Paid</span
+                  ><span>⭐⭐⭐⭐⭐</span>
+                </div>
+              </div>
+
+              <div class="list-row">
+                <div>
+                  <span style="font-size: 0.8rem"
+                    >OpenAI text-embedding-3-small</span
+                  >
+                </div>
+                <div style="display: flex; gap: 0.5rem; font-size: 0.72rem">
+                  <span style="color: var(--text-dim)">1536d</span
+                  ><span style="color: var(--color-llm)">Paid</span
+                  ><span>⭐⭐⭐⭐</span>
+                </div>
+              </div>
+
+              <div class="list-row">
+                <div>
+                  <span style="font-size: 0.8rem"
+                    >Sentence-Transformers (local)</span
+                  >
+                </div>
+                <div style="display: flex; gap: 0.5rem; font-size: 0.72rem">
+                  <span style="color: var(--text-dim)">384d</span
+                  ><span style="color: var(--color-embeddings)">Free</span
+                  ><span>⭐⭐⭐</span>
+                </div>
+              </div>
+
+              <div class="list-row">
+                <div>
+                  <span style="font-size: 0.8rem">Ollama nomic-embed-text</span>
+                </div>
+                <div style="display: flex; gap: 0.5rem; font-size: 0.72rem">
+                  <span style="color: var(--text-dim)">768d</span
+                  ><span style="color: var(--color-embeddings)">Free</span
+                  ><span>⭐⭐⭐⭐</span>
+                </div>
+              </div>
+
+              <div class="list-row">
+                <div>
+                  <span style="font-size: 0.8rem">HuggingFace BGE-large</span>
+                </div>
+                <div style="display: flex; gap: 0.5rem; font-size: 0.72rem">
+                  <span style="color: var(--text-dim)">1024d</span
+                  ><span style="color: var(--color-embeddings)">Free</span
+                  ><span>⭐⭐⭐⭐</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            style="
+              background: var(--bg-highlight);
+              border-radius: 8px;
+              padding: 1rem;
+              border: 1px solid var(--color-embeddings);
+            "
+          >
+            <div
+              style="
+                color: var(--color-embeddings);
+                font-size: 0.8rem;
+                font-weight: 700;
+                margin-bottom: 0.5rem;
+              "
+            >
+              ✅ Rule of thumb:
+            </div>
+            <div style="font-size: 0.8rem; line-height: 1.7">
+              More dimensions = better semantic understanding, but slower & more
+              expensive.<br />
+              For small projects: use free Sentence-Transformers locally.<br />
+              For production: OpenAI or Gemini embeddings.
+            </div>
+          </div>
+        </section>
+
+        <section id="chunking" class="content-section">
+          <div class="section-header">
+            <span class="emoji">✂️</span>
+            <h2 style="color: var(--color-chunking)">
+              Chunking — Why Split Documents?
+            </h2>
+          </div>
+
+          <p>
+            You can't embed a 500-page PDF as one blob — it would be too big AND
+            the embedding would lose specificity. Chunking breaks it into
+            digestible pieces.
+          </p>
+
+          <div style="margin-bottom: 1rem">
+            <div
+              style="
+                color: var(--color-chunking);
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+              "
+            >
+              Types of Chunking:
+            </div>
+            <div class="grid-stack">
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 6px;
+                  padding: 0.75rem;
+                  border: 1px solid var(--color-chunking);
+                "
+              >
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    margin-bottom: 0.35rem;
+                  "
+                >
+                  <span style="font-weight: 600; font-size: 0.82rem"
+                    >Fixed Size (Character)</span
+                  >
+                  <span class="tag" style="background: var(--color-chunking)"
+                    >USED</span
+                  >
+                </div>
+                <code
+                  style="
+                    color: var(--text-code);
+                    font-size: 0.7rem;
+                    display: block;
+                    margin-bottom: 0.35rem;
+                  "
+                  >RecursiveCharacterTextSplitter(chunk_size=1000,
+                  chunk_overlap=100)</code
+                >
+                <div style="display: flex; gap: 1rem; font-size: 0.72rem">
+                  <span style="color: var(--color-embeddings)"
+                    >✓ Simple, predictable</span
+                  >
+                  <span style="color: #f87171">✗ May cut mid-sentence</span>
+                </div>
+              </div>
+
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 6px;
+                  padding: 0.75rem;
+                  border: 1px solid transparent;
+                "
+              >
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    margin-bottom: 0.35rem;
+                  "
+                >
+                  <span style="font-weight: 600; font-size: 0.82rem"
+                    >Sentence-aware</span
+                  >
+                </div>
+                <code
+                  style="
+                    color: var(--text-code);
+                    font-size: 0.7rem;
+                    display: block;
+                    margin-bottom: 0.35rem;
+                  "
+                  >SentenceTransformersTokenTextSplitter()</code
+                >
+                <div style="display: flex; gap: 1rem; font-size: 0.72rem">
+                  <span style="color: var(--color-embeddings)"
+                    >✓ Never breaks sentences</span
+                  >
+                  <span style="color: #f87171">✗ Variable chunk sizes</span>
+                </div>
+              </div>
+
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 6px;
+                  padding: 0.75rem;
+                  border: 1px solid transparent;
+                "
+              >
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    margin-bottom: 0.35rem;
+                  "
+                >
+                  <span style="font-weight: 600; font-size: 0.82rem"
+                    >Semantic Chunking</span
+                  >
+                </div>
+                <code
+                  style="
+                    color: var(--text-code);
+                    font-size: 0.7rem;
+                    display: block;
+                    margin-bottom: 0.35rem;
+                  "
+                  >SemanticChunker(embeddings)</code
+                >
+                <div style="display: flex; gap: 1rem; font-size: 0.72rem">
+                  <span style="color: var(--color-embeddings)"
+                    >✓ Groups related ideas</span
+                  >
+                  <span style="color: #f87171">✗ Slower, more complex</span>
+                </div>
+              </div>
+
+              <div
+                style="
+                  background: var(--bg-highlight);
+                  border-radius: 6px;
+                  padding: 0.75rem;
+                  border: 1px solid var(--color-chunking);
+                "
+              >
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    margin-bottom: 0.35rem;
+                  "
+                >
+                  <span style="font-weight: 600; font-size: 0.82rem"
+                    >Recursive (your code!)</span
+                  >
+                  <span class="tag" style="background: var(--color-chunking)"
+                    >USED</span
+                  >
+                </div>
+                <code
+                  style="
+                    color: var(--text-code);
+                    font-size: 0.7rem;
+                    display: block;
+                    margin-bottom: 0.35rem;
+                  "
+                  >RecursiveCharacterTextSplitter()</code
+                >
+                <div style="display: flex; gap: 1rem; font-size: 0.72rem">
+                  <span style="color: var(--color-embeddings)"
+                    >✓ Tries [\n\n, \n, . , ] in order</span
+                  >
+                  <span style="color: #f87171">✗ Still heuristic-based</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="code-box">
+            <div
+              style="
+                color: var(--color-chunking);
+                font-size: 0.8rem;
+                font-weight: 700;
+                margin-bottom: 0.5rem;
+              "
+            >
+              chunk_overlap explained:
+            </div>
+            <pre style="line-height: 1.7">
+chunk_size=1000, chunk_overlap=100:
+
+Chunk 1: "...Accenture reported record bookings of $22.1 billion for Q2 FY26. 
+         The revenues reached $18.0 billion, an 8% increase..."  ← 1000 chars
+
+Chunk 2: "...an 8% increase. CEO Julie Sweet noted AI-driven growth..."  
+                ↑ these 100 chars repeat in both chunks
+
+Why overlap? So context isn't lost at chunk boundaries!</pre
+            >
+          </div>
+        </section>
+
+        <section id="vectordb" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🗄️</span>
+            <h2 style="color: var(--color-vectordb)">
+              Vector Database — Why Not Just a Regular DB?
+            </h2>
+          </div>
+
+          <p>
+            A regular SQL database does <strong>exact match lookups</strong>. A
+            vector database does <strong>similarity searches</strong> using
+            math.
+          </p>
+
+          <div class="code-box" style="margin-bottom: 1rem">
+            <pre style="color: var(--text-code); line-height: 1.8">
+-- SQL (exact match only):
+SELECT * FROM docs WHERE text LIKE '%Accenture%';
+-- ❌ Misses: "ACN", "the consulting firm", "Julie Sweet's company"
+
+-- Vector DB (semantic similarity):
+query_vector = embed("What is Accenture's revenue?")
+results = faiss.search(query_vector, k=5)
+-- ✅ Finds all semantically related chunks regardless of exact words</pre
+            >
+          </div>
+
+          <div style="margin-bottom: 1rem">
+            <div
+              style="
+                color: var(--color-vectordb);
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+              "
+            >
+              Popular Vector Databases:
+            </div>
+            <div class="grid-stack">
+              <div class="list-row">
+                <div>
+                  <span style="font-size: 0.8rem">FAISS (Facebook)</span>
+                  <span class="tag" style="background: var(--color-vectordb)"
+                    >YOUR CODE</span
+                  >
+                </div>
+                <span style="color: var(--text-dim); font-size: 0.72rem"
+                  >Used in your code — fast, no server needed</span
+                >
+              </div>
+
+              <div class="list-row">
+                <div><span style="font-size: 0.8rem">Chroma</span></div>
+                <span style="color: var(--text-dim); font-size: 0.72rem"
+                  >Great for dev, simple setup</span
+                >
+              </div>
+
+              <div class="list-row">
+                <div><span style="font-size: 0.8rem">Pinecone</span></div>
+                <span style="color: var(--text-dim); font-size: 0.72rem"
+                  >Production-grade, fully managed</span
+                >
+              </div>
+
+              <div class="list-row">
+                <div><span style="font-size: 0.8rem">Weaviate</span></div>
+                <span style="color: var(--text-dim); font-size: 0.72rem"
+                  >GraphQL interface</span
+                >
+              </div>
+
+              <div class="list-row">
+                <div><span style="font-size: 0.8rem">Qdrant</span></div>
+                <span style="color: var(--text-dim); font-size: 0.72rem"
+                  >Rust-based, very fast</span
+                >
+              </div>
+            </div>
+          </div>
+
+          <div
+            style="
+              background: var(--bg-highlight);
+              border-radius: 8px;
+              padding: 1rem;
+              border: 1px solid var(--color-vectordb);
+            "
+          >
+            <div
+              style="
+                color: var(--color-vectordb);
+                font-size: 0.8rem;
+                font-weight: 700;
+                margin-bottom: 0.5rem;
+              "
+            >
+              Can you go Vector-DB-less?
+            </div>
+            <div style="font-size: 0.8rem; line-height: 1.7">
+              <strong>Yes!</strong> If your data is small (&lt;200 chunks), you
+              can compute similarity in pure Python with numpy using cosine
+              similarity. No FAISS needed. But it gets slow fast.
+            </div>
+            <div
+              style="
+                background: var(--bg-base);
+                border-radius: 6px;
+                padding: 0.75rem;
+                margin-top: 0.75rem;
+              "
+            >
+              <pre style="color: var(--text-code); line-height: 1.5">
+import numpy as np
+
+def cosine_sim(a, b):
+    return np.dot(a,b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+# Find top-3 most similar chunks manually
+scores = [(i, cosine_sim(query_vec, chunk_vec)) 
+          for i, chunk_vec in enumerate(all_vecs)]
+top3 = sorted(scores, key=lambda x: -x[1])[:3]</pre
+              >
+            </div>
+          </div>
+        </section>
+
+        <section id="topk" class="content-section">
+          <div class="section-header">
+            <span class="emoji">🎯</span>
+            <h2 style="color: var(--color-topk)">
+              What is top-k? (k=5 in your code)
+            </h2>
+          </div>
+
+          <p>
+            When you search a vector DB, you get back the
+            <strong>k most similar chunks</strong> to your query. In your code:
+            <span class="inline-code"
+              >retriever = vector_db.as_retriever(search_kwargs={"k": 5})</span
+            >
+          </p>
+
+          <div class="code-box" style="margin-bottom: 1rem">
+            <pre style="line-height: 1.9">
+Query: "What is Accenture's Q2 revenue?"
+Query vector: [0.11, -0.91, 0.42, ...]
+
+All chunks in DB (sorted by similarity):
+┌────┬─────────────────────────────────────────────┬──────────┐
+│ #  │ Chunk                                       │ Score    │
+├────┼─────────────────────────────────────────────┼──────────┤
+│ 1  │ "Accenture Q2 revenues reached $18.0B..."   │  0.97 ✅  │ ← k=1
+│ 2  │ "CEO Julie Sweet noted AI-driven growth"    │  0.91 ✅  │ ← k=2
+│ 3  │ "Record bookings of $22.1B for Q2 FY26"     │  0.89 ✅  │ ← k=3
+│ 4  │ "Dividend of $1.63 per share..."            │  0.72 ✅  │ ← k=4
+│ 5  │ "Defense sector robotics supply chains..."  │  0.68 ✅  │ ← k=5
+│ 6  │ "Gold is a safe-haven asset..."             │  0.31 ❌  │
+│ 7  │ "Copper is conductive metal..."             │  0.18 ❌  │
+└────┴─────────────────────────────────────────────┴──────────┘
+                              Only top 5 sent to LLM ↑</pre
+            >
+          </div>
+
+          <div
+            style="
+              background: var(--bg-highlight);
+              border-radius: 8px;
+              padding: 1rem;
+              border: 1px solid var(--color-topk);
+            "
+          >
+            <div
+              style="color: #a78bfa; font-weight: 700; margin-bottom: 0.5rem"
+            >
+              How to choose k?
+            </div>
+            <div class="grid-stack">
+              <div
+                style="
+                  display: flex;
+                  gap: 1rem;
+                  align-items: flex-start;
+                  font-size: 0.8rem;
+                "
+              >
+                <span class="inline-code">k=1-3</span
+                ><span style="color: var(--text-muted)"
+                  >Quick factual lookups, when you trust your data is
+                  clean</span
+                >
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 1rem;
+                  align-items: flex-start;
+                  font-size: 0.8rem;
+                "
+              >
+                <span class="inline-code">k=5</span
+                ><span style="color: var(--text-muted)"
+                  >Balanced (your code's choice) — good default</span
+                >
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 1rem;
+                  align-items: flex-start;
+                  font-size: 0.8rem;
+                "
+              >
+                <span class="inline-code">k=10+</span
+                ><span style="color: var(--text-muted)"
+                  >Complex questions needing multiple sources</span
+                >
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 1rem;
+                  align-items: flex-start;
+                  font-size: 0.8rem;
+                "
+              >
+                <span class="inline-code">Too high</span
+                ><span style="color: var(--text-muted)"
+                  >❌ Floods LLM with noise, reduces answer quality</span
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="code" class="content-section">
+          <div class="section-header">
+            <span class="emoji">💻</span>
+            <h2 style="color: var(--color-code)">
+              Step-by-Step Code Walkthrough
+            </h2>
+          </div>
+
+          <p>
+            Here's your exact codebase explained line by line, with the simplest
+            possible RAG you could write yourself.
+          </p>
+
+          <div class="grid-stack" style="gap: 1rem">
+            <div
+              style="
+                background: var(--bg-base);
+                border-radius: 8px;
+                border: 1px solid #7c3aed;
+                overflow: hidden;
+              "
+            >
+              <div
+                style="
+                  background: #7c3aed;
+                  padding: 0.5rem 1rem;
+                  font-size: 0.78rem;
+                  font-weight: 700;
+                  color: #fff;
+                "
+              >
+                STEP 1: ingest.py — Build the index (runs once)
+              </div>
+              <pre
+                style="padding: 1rem; color: var(--text-code); line-height: 1.7"
+              >
+# 1. Load your files
+loader = PyPDFLoader("accenture_report.pdf")
+docs = loader.load()   # → list of Document objects
+
+# 2. Split into chunks
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,    # max 1000 chars per chunk
+    chunk_overlap=100   # 100 char overlap between chunks
+)
+chunks = splitter.split_documents(docs)
+# → ["Accenture Q2 revenues reached $18B...", 
+#    "...18B, an 8% increase. CEO Julie...", ...]
+
+# 3. Create embeddings (convert text → vectors)
+embeddings = GoogleGenerativeAIEmbeddings(
+    model="models/gemini-embedding-001"
+)
+
+# 4. Store in FAISS (builds the searchable index)
+vector_db = FAISS.from_documents(chunks, embeddings)
+vector_db.save_local("faiss_index")  # saved to disk!</pre
+              >
+            </div>
+
+            <div
+              style="
+                background: var(--bg-base);
+                border-radius: 8px;
+                border: 1px solid #0891b2;
+                overflow: hidden;
+              "
+            >
+              <div
+                style="
+                  background: #0891b2;
+                  padding: 0.5rem 1rem;
+                  font-size: 0.78rem;
+                  font-weight: 700;
+                  color: #fff;
+                "
+              >
+                STEP 2: mcp_server.py — Load & Search
+              </div>
+              <pre
+                style="padding: 1rem; color: var(--text-code); line-height: 1.7"
+              >
+# 1. Load the saved index at startup
+vector_db = FAISS.load_local(
+    "faiss_index",
+    embeddings,
+    allow_dangerous_deserialization=True
+)
+
+# 2. Create a retriever with k=5
+retriever = vector_db.as_retriever(search_kwargs={"k": 5})
+
+# 3. Search when tool is called
+@mcp.tool()
+def mcp_search_corporate_records(query: str) -> str:
+    docs = retriever.invoke(query)
+    # → retriever: embeds query, finds top-5 similar chunks
+    return "\n\n".join([d.page_content for d in docs])</pre
+              >
+            </div>
+
+            <div
+              style="
+                background: var(--bg-base);
+                border-radius: 8px;
+                border: 1px solid #10b981;
+                overflow: hidden;
+              "
+            >
+              <div
+                style="
+                  background: #10b981;
+                  padding: 0.5rem 1rem;
+                  font-size: 0.78rem;
+                  font-weight: 700;
+                  color: #fff;
+                "
+              >
+                STEP 3: main.py — LLM uses the retrieved context
+              </div>
+              <pre
+                style="padding: 1rem; color: var(--text-code); line-height: 1.7"
+              >
+# LLM gets: system_prompt + retrieved_chunks + user_question
+# The agent_node calls the MCP tool, which does the retrieval
+
+system_prompt = """You are a Market Analyst.
+Use your MCP tools when factual lookup is needed."""
+
+# LangGraph flow:
+# user question → router → agent → [calls mcp tool] 
+#               → gets chunks → writer → final answer
+
+# Simplified manually:
+user_q = "What is Accenture Q2 revenue?"
+chunks = mcp_search_corporate_records(user_q)
+# chunks = "Accenture Q2 revenues reached $18.0 billion..."
+
+prompt = f"Context: {chunks}\nQuestion: {user_q}"
+answer = llm.invoke(prompt)
+# → "Based on the Q2 FY26 report, Accenture's revenue was $18.0B"</pre
+              >
+            </div>
+          </div>
+        </section>
+
+        <section id="rag-types" class="content-section">
+          <div class="section-header">
+            <span class="emoji">📚</span>
+            <h2 style="color: var(--color-types)">
+              Types of RAG — Which One Are You Using?
+            </h2>
+          </div>
+
+          <p>Your code uses a hybrid of multiple RAG patterns.</p>
+
+          <div class="grid-stack">
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 0.85rem;
+                border: 1px solid var(--border-color);
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 0.5rem;
+              "
+            >
+              <div>
+                <div
+                  style="
+                    font-weight: 600;
+                    font-size: 0.85rem;
+                    margin-bottom: 0.25rem;
+                  "
+                >
+                  Naive RAG
+                </div>
+                <div
+                  style="
+                    color: var(--text-dim);
+                    font-size: 0.78rem;
+                    line-height: 1.5;
+                  "
+                >
+                  Simple: embed → store → query → retrieve → LLM
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--border-card);
+                  color: var(--text-muted);
+                  font-size: 0.6rem;
+                  padding: 2px 8px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Basic</span
+              >
+            </div>
+
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 0.85rem;
+                border: 1px solid var(--color-types);
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 0.5rem;
+              "
+            >
+              <div>
+                <div
+                  style="
+                    font-weight: 600;
+                    font-size: 0.85rem;
+                    margin-bottom: 0.25rem;
+                  "
+                >
+                  Agentic RAG
+                </div>
+                <div
+                  style="
+                    color: var(--text-dim);
+                    font-size: 0.78rem;
+                    line-height: 1.5;
+                  "
+                >
+                  LLM decides WHICH tool to call (local vs web vs CSV). Your
+                  router_node + agent_node does this.
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--color-types);
+                  color: #000;
+                  font-size: 0.6rem;
+                  padding: 2px 8px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Your code ✅</span
+              >
+            </div>
+
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 0.85rem;
+                border: 1px solid var(--border-color);
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 0.5rem;
+              "
+            >
+              <div>
+                <div
+                  style="
+                    font-weight: 600;
+                    font-size: 0.85rem;
+                    margin-bottom: 0.25rem;
+                  "
+                >
+                  Hybrid RAG
+                </div>
+                <div
+                  style="
+                    color: var(--text-dim);
+                    font-size: 0.78rem;
+                    line-height: 1.5;
+                  "
+                >
+                  Combines keyword search (BM25) + vector search. Better recall.
+                  Not in your code but easy to add.
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--border-card);
+                  color: var(--text-muted);
+                  font-size: 0.6rem;
+                  padding: 2px 8px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Upgrade option</span
+              >
+            </div>
+
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 0.85rem;
+                border: 1px solid var(--color-types);
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 0.5rem;
+              "
+            >
+              <div>
+                <div
+                  style="
+                    font-weight: 600;
+                    font-size: 0.85rem;
+                    margin-bottom: 0.25rem;
+                  "
+                >
+                  Self-RAG
+                </div>
+                <div
+                  style="
+                    color: var(--text-dim);
+                    font-size: 0.78rem;
+                    line-height: 1.5;
+                  "
+                >
+                  LLM checks its own answer quality and re-retrieves if unsure.
+                  Your validator_node does this!
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--color-types);
+                  color: #000;
+                  font-size: 0.6rem;
+                  padding: 2px 8px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Your code ✅</span
+              >
+            </div>
+
+            <div
+              style="
+                background: var(--bg-highlight);
+                border-radius: 8px;
+                padding: 0.85rem;
+                border: 1px solid var(--border-color);
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 0.5rem;
+              "
+            >
+              <div>
+                <div
+                  style="
+                    font-weight: 600;
+                    font-size: 0.85rem;
+                    margin-bottom: 0.25rem;
+                  "
+                >
+                  Graph RAG
+                </div>
+                <div
+                  style="
+                    color: var(--text-dim);
+                    font-size: 0.78rem;
+                    line-height: 1.5;
+                  "
+                >
+                  Builds knowledge graphs instead of flat chunks. Great for
+                  highly interconnected data.
+                </div>
+              </div>
+              <span
+                style="
+                  background: var(--border-card);
+                  color: var(--text-muted);
+                  font-size: 0.6rem;
+                  padding: 2px 8px;
+                  border-radius: 4px;
+                  white-space: nowrap;
+                "
+                >Advanced</span
+              >
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      // Tab Controller
+      document.addEventListener("DOMContentLoaded", () => {
+        const navBtns = document.querySelectorAll(".nav-btn");
+        const sections = document.querySelectorAll(".content-section");
+
+        navBtns.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            // Remove active classes
+            navBtns.forEach((b) => b.classList.remove("active"));
+            sections.forEach((s) => s.classList.remove("active"));
+
+            // Add active class to clicked button
+            btn.classList.add("active");
+
+            // Show corresponding section
+            const target = document.getElementById(btn.dataset.target);
+            if (target) target.classList.add("active");
+          });
+        });
+      });
+    </script>
+  </body>
+</html>
