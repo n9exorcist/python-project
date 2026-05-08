@@ -1,11 +1,930 @@
+// src/hooks/useChat.js
+import { useState, useCallback, useEffect } from "react";
+import {
+  useGetChatThreadsQuery,
+  useDeleteChatThreadMutation,
+  useSendChatMessageMutation,
+  kpiApi,
+} from "../services/kpiApi";
+import { useDispatch } from "react-redux";
+
+const useChat = (user) => {
+  const dispatch = useDispatch();
+  const [chatHistory, setChatHistory] = useState([]);
+  const [error, setError] = useState(null);
+  const [threadId, setThreadId] = useState(null);
+  const [conversationsByThread, setConversationsByThread] = useState({});
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
+
+  // ── 1. Fetch all threads on mount ────────────────────────────
+  const { data: threadsMap, isLoading: threadsLoading } =
+    useGetChatThreadsQuery(undefined, { skip: !user });
+
+  // ── 2. Prefetch titles for ALL threads on load ───────────────
+  useEffect(() => {
+    if (!threadsMap) return;
+
+    const prefetchAllTitles = async () => {
+      const allThreads = Object.values(threadsMap);
+
+      // ✅ Run all prefetches in parallel — no limit
+      const results = await Promise.allSettled(
+        allThreads.map(async (thread) => {
+          // Skip if already has a title
+          if (thread.title) {
+            return { threadId: thread.threadId, title: thread.title };
+          }
+
+          try {
+            const result = await dispatch(
+              kpiApi.endpoints.getChatThreadMessages.initiate(
+                thread.threadId,
+                { forceRefetch: false } // use cache if available
+              )
+            );
+
+            if (result.data) {
+              // ✅ Find first user message with non-null content
+              const firstUserMsg = result.data.find(
+                (m) =>
+                  m.role === "user" &&
+                  m.content &&
+                  m.content !== "null" &&
+                  m.content.trim() !== ""
+              );
+
+              return {
+                threadId: thread.threadId,
+                title: firstUserMsg?.content || null,
+              };
+            }
+          } catch (e) {
+            // silently ignore
+          }
+          return { threadId: thread.threadId, title: null };
+        })
+      );
+
+      // Build updated map with all titles
+      const updatedMap = { ...threadsMap };
+      results.forEach((result) => {
+        if (result.status === "fulfilled" && result.value?.title) {
+          const { threadId: tId, title } = result.value;
+          updatedMap[tId] = {
+            ...updatedMap[tId],
+            title,
+          };
+        }
+      });
+
+      setConversationsByThread(updatedMap);
+    };
+
+    prefetchAllTitles();
+  }, [threadsMap, dispatch]);
+
+  // ── 3. Normalize raw backend messages ────────────────────────
+  const normalizeMessages = useCallback((rawMessages) => {
+    return (rawMessages || [])
+      .filter((msg) => msg?.role !== "system")
+      .map((msg) => {
+        const role = msg?.role || "assistant";
+        const metadata = msg?.metadata || {};
+        const assistantResponse = metadata?.assistant_response || {};
+        const chartSpec = assistantResponse?.chart_spec || {};
+
+        let parsedContent = msg?.content;
+        let chartData = null;
+        let chartType = null;
+
+        // ✅ Handle null content from backend
+        if (parsedContent === null || parsedContent === "null") {
+          parsedContent = "";
+        }
+
+        // ✅ Detect JSON chart payloads stored as strings
+        if (typeof parsedContent === "string") {
+          const trimmed = parsedContent.trim();
+          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (parsed.weekly_trends || parsed.monthly_trends) {
+                chartData = parsed;
+                chartType = "line";
+                parsedContent = "Here is the trendline chart:";
+              } else if (Array.isArray(parsed)) {
+                chartData = parsed;
+                chartType = "bar";
+                parsedContent = "Here is the chart:";
+              }
+            } catch (e) {
+              // not JSON, keep as text
+            }
+          }
+        }
+
+        // Handle financial_chart type
+        if (!chartData && assistantResponse?.type === "financial_chart") {
+          chartData = Array.isArray(assistantResponse?.data)
+            ? assistantResponse.data
+            : assistantResponse?.data || null;
+          chartType = chartSpec?.chart_type || "bar";
+        }
+
+        const finalMessage =
+          typeof parsedContent === "string"
+            ? parsedContent.trim()
+            : parsedContent != null
+            ? String(parsedContent).trim()
+            : "";
+
+        return {
+          from: role === "user" ? "user" : "bot",
+          message: finalMessage,
+          timestamp: msg?.timestamp,
+          chartData,
+          chartType,
+          state: metadata?.state || null,
+        };
+      })
+      .filter((msg) => !!msg.message || !!msg.chartData);
+  }, []);
+
+  // ── 4. RTK mutations ──────────────────────────────────────────
+  const [sendChatMessageMutation, { isLoading: sendLoading }] =
+    useSendChatMessageMutation();
+  const [deleteChatThreadMutation] = useDeleteChatThreadMutation();
+
+  // ── 5. Send a message ─────────────────────────────────────────
+  const sendMessage = useCallback(
+    async (message) => {
+      if (!message.trim()) return;
+
+      setChatHistory((prev) => [...prev, { from: "user", message }]);
+      setError(null);
+
+      try {
+        const data = await sendChatMessageMutation({
+          message,
+          threadId,
+        }).unwrap();
+
+        const effectiveThreadId = data.thread_id || threadId || "temp_id";
+
+        const rawResponse = data.assistant_response;
+        let textForMarkdown = "I have generated the analysis below:";
+        let chartDataForRenderer = null;
+        let finalChartType = data.state?.chart_intent?.chart_type || "bar";
+
+        if (rawResponse?.type === "financial_text") {
+          textForMarkdown = [rawResponse.insight, rawResponse.key_takeaway]
+            .filter(Boolean)
+            .join("\n\n");
+          chartDataForRenderer = null;
+          finalChartType = null;
+        } else if (rawResponse?.type === "financial_chart") {
+          finalChartType = rawResponse.chart_spec?.chart_type || finalChartType;
+          chartDataForRenderer = Array.isArray(rawResponse.data)
+            ? rawResponse.data
+            : [];
+          textForMarkdown = [
+            rawResponse.chart_spec?.title,
+            rawResponse.chart_spec?.description,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+        } else if (typeof rawResponse === "string") {
+          textForMarkdown = rawResponse;
+        } else if (Array.isArray(rawResponse)) {
+          chartDataForRenderer = rawResponse;
+        } else if (rawResponse && typeof rawResponse === "object") {
+          chartDataForRenderer = rawResponse;
+        }
+
+        const botMessage = {
+          from: "bot",
+          message: textForMarkdown,
+          chartData: chartDataForRenderer,
+          chartType: finalChartType,
+          timestamp: data.timestamp,
+          state: data.state,
+        };
+
+        setChatHistory((prev) => {
+          const filtered = prev.filter(
+            (m, i) => !(m.from === "user" && i === prev.length - 1)
+          );
+          return [...filtered, { from: "user", message }, botMessage];
+        });
+
+        if (effectiveThreadId !== threadId) {
+          setThreadId(effectiveThreadId);
+        }
+
+        setConversationsByThread((prev) => {
+          const existing = prev[effectiveThreadId];
+          return {
+            ...prev,
+            [effectiveThreadId]: {
+              threadId: effectiveThreadId,
+              title: existing?.title || message,
+              createdAt: existing?.createdAt || data.timestamp,
+              lastMessageAt: data.timestamp,
+              messages: [
+                ...(existing?.messages || []),
+                { from: "user", message },
+                botMessage,
+              ],
+            },
+          };
+        });
+      } catch (err) {
+        setError(
+          err?.data?.detail || err.message || "An unexpected error occurred."
+        );
+        setChatHistory((prev) => prev.slice(0, -1));
+      }
+    },
+    [sendChatMessageMutation, threadId]
+  );
+
+  // ── 6. Load thread on click ───────────────────────────────────
+  const loadThreadHistory = useCallback(
+    async (tId) => {
+      if (tId === threadId) return;
+
+      setChatHistory([]);
+      setThreadId(tId);
+      setIsLoadingThread(true);
+      setError(null);
+
+      const existing = conversationsByThread[tId];
+      if (existing?.messages?.length > 0) {
+        setChatHistory(existing.messages);
+        setIsLoadingThread(false);
+        return;
+      }
+
+      try {
+        const result = await dispatch(
+          kpiApi.endpoints.getChatThreadMessages.initiate(tId, {
+            forceRefetch: true,
+          })
+        );
+
+        if (result.data) {
+          const normalized = normalizeMessages(result.data);
+          setChatHistory(normalized);
+
+          // ✅ Also update title from fetched messages
+          const firstUserMsg = result.data.find(
+            (m) =>
+              m.role === "user" &&
+              m.content &&
+              m.content !== "null" &&
+              m.content.trim() !== ""
+          );
+
+          setConversationsByThread((prev) => ({
+            ...prev,
+            [tId]: {
+              ...prev[tId],
+              title:
+                prev[tId]?.title || firstUserMsg?.content || prev[tId]?.title,
+              messages: normalized,
+            },
+          }));
+        } else {
+          setChatHistory([]);
+        }
+      } catch (err) {
+        setError("Failed to load conversation.");
+        setChatHistory([]);
+      } finally {
+        setIsLoadingThread(false);
+      }
+    },
+    [conversationsByThread, threadId, dispatch, normalizeMessages]
+  );
+
+  // ── 7. Delete a thread ────────────────────────────────────────
+  const removeThread = useCallback(
+    async (tId) => {
+      try {
+        await deleteChatThreadMutation(tId).unwrap();
+        setConversationsByThread((prev) => {
+          const updated = { ...prev };
+          delete updated[tId];
+          return updated;
+        });
+        if (tId === threadId) {
+          setChatHistory([]);
+          setThreadId(null);
+        }
+      } catch (err) {
+        setError("Failed to delete thread.");
+      }
+    },
+    [deleteChatThreadMutation, threadId]
+  );
+
+  // ── 8. New chat ───────────────────────────────────────────────
+  const clearChat = useCallback(() => {
+    setChatHistory([]);
+    setThreadId(null);
+  }, []);
+
+  return {
+    chatHistory,
+    loading: sendLoading || isLoadingThread,
+    threadsLoading,
+    error,
+    sendMessage,
+    clearChat,
+    threadId,
+    setThreadId,
+    conversationsByThread,
+    loadThreadHistory,
+    removeThread,
+  };
+};
+
+export default useChat;
+
+--
+
+
+/* eslint-disable no-console */
+import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+import { REHYDRATE } from "redux-persist";
+
+// --------------------------
+// TOKEN HANDLER (MSAL Integration)
+// --------------------------
+let globalGetAccessToken = null;
+
+export const setTokenGetter = (getAccessToken) => {
+  globalGetAccessToken = getAccessToken;
+};
+
+// --------------------------
+// BASE QUERY WITH AUTH
+// --------------------------
+const baseQueryWithAuth = async (args, api, extraOptions) => {
+  let token = "";
+
+  try {
+    if (typeof globalGetAccessToken === "function") {
+      token = await globalGetAccessToken();
+    } else {
+      console.warn(
+        "⚠️ No token getter function registered. Call setTokenGetter() inside useUser()"
+      );
+    }
+  } catch (err) {
+    console.error("❌ Failed to fetch token from MSAL:", err);
+  }
+
+  const baseQuery = fetchBaseQuery({
+    baseUrl: process.env.REACT_APP_API_URL,
+    credentials: "include",
+    prepareHeaders: (headers) => {
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      return headers;
+    },
+  });
+
+  let result = await baseQuery(args, api, extraOptions);
+
+  if (result.error && result.error.status === 401) {
+    console.warn("🔄 Token might be invalid, attempting refresh...");
+    try {
+      const refreshedToken = await globalGetAccessToken();
+      if (refreshedToken) {
+        const retryBaseQuery = fetchBaseQuery({
+          baseUrl: process.env.REACT_APP_API_URL,
+          credentials: "include",
+          prepareHeaders: (headers) => {
+            headers.set("Authorization", `Bearer ${refreshedToken}`);
+            headers.set("Content-Type", "application/json");
+            return headers;
+          },
+        });
+        result = await retryBaseQuery(args, api, extraOptions);
+      } else {
+        console.error("❌ Token refresh failed: still missing");
+      }
+    } catch (refreshError) {
+      console.error("❌ Token refresh attempt failed:", refreshError);
+    }
+  }
+
+  return result;
+};
+
+// --------------------------
+// CREATE KPI API SERVICE
+// --------------------------
+export const kpiApi = createApi({
+  reducerPath: "kpiApi",
+  baseQuery: baseQueryWithAuth,
+  keepUnusedDataFor: 86400,
+  refetchOnMountOrArgChange: false,
+  refetchOnFocus: false,
+  refetchOnReconnect: false,
+  tagTypes: [
+    "KPIData",
+    "KPIBenchmarking",
+    "MaturityData",
+    "MaturityAssessmentData",
+    "PeerFinancial",
+    "Recommendations",
+    "BusinessCase",
+    "TrendlineData",
+    "HeatmapData",
+    "Files",
+    "Months",
+    "Channels",
+    "ProductH1s",
+    "BrandH2s",
+    "Waterfall",
+    "FinancialAnalysis",
+    "ExecutiveSummary",
+    "KpiDropdown",
+    "ChatHistory",
+  ],
+  endpoints: (build) => ({
+    uploadFile: build.mutation({
+      query: (formData) => ({
+        url: "/validate-and-summarize/",
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      }),
+      invalidatesTags: [
+        { type: "Files" },
+        { type: "KPIData" },
+        { type: "HeatmapData" },
+        { type: "Waterfall" },
+        { type: "TrendlineData" },
+        { type: "BusinessCase" },
+        { type: "Recommendations" },
+        { type: "ExecutiveSummary" },
+      ],
+    }),
+
+    getKpiCalculation: build.query({
+      query: ({ month, channel, productH1, brandH2 } = {}) => {
+        const q = new URLSearchParams();
+        (Array.isArray(month) ? month : [month]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("month", val);
+        });
+        (Array.isArray(channel) ? channel : [channel]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("channel", val);
+        });
+        (Array.isArray(productH1) ? productH1 : [productH1]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("product_h1", val);
+        });
+        (Array.isArray(brandH2) ? brandH2 : [brandH2]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("brand_h2", val);
+        });
+        const suffix = q.toString() ? `?${q.toString()}` : "";
+        return `/kpi-calculation${suffix}`;
+      },
+      providesTags: ["KPIData", "HeatmapData"],
+      transformResponse: (resp) => {
+        const heatmap = resp?.heatmap_json || {};
+        return {
+          raw: resp,
+          heatmap,
+        };
+      },
+      transformErrorResponse: (response) => {
+        console.error("❌ KPI Calculation API Error:", response);
+        return response;
+      },
+    }),
+
+    getKpiWaterfallData: build.query({
+      query: ({ month, channel, productH1, brandH2 }) => {
+        const q = new URLSearchParams();
+        (Array.isArray(month) ? month : [month]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("month", val);
+        });
+        (Array.isArray(channel) ? channel : [channel]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("channel", val);
+        });
+        (Array.isArray(productH1) ? productH1 : [productH1]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("product_h1", val);
+        });
+        (Array.isArray(brandH2) ? brandH2 : [brandH2]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("brand_h2", val);
+        });
+        return `/kpi/waterfall/data?${q.toString()}`;
+      },
+      providesTags: ["Waterfall"],
+      transformResponse: (resp) => (Array.isArray(resp) ? resp : []),
+      transformErrorResponse: (response) => {
+        console.error("❌ KPI Waterfall API Error:", response);
+        return response;
+      },
+    }),
+
+    getKpiTrendlineData: build.query({
+      query: ({ month, channel, productH1, brandH2 }) => {
+        const q = new URLSearchParams();
+        (Array.isArray(month) ? month : [month]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("month", val);
+        });
+        (Array.isArray(channel) ? channel : [channel]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("channel", val);
+        });
+        (Array.isArray(productH1) ? productH1 : [productH1]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("product_h1", val);
+        });
+        (Array.isArray(brandH2) ? brandH2 : [brandH2]).forEach((val) => {
+          if (val && val !== "Overall" && val !== "All") q.append("brand_h2", val);
+        });
+        const suffix = q.toString() ? `?${q.toString()}` : "";
+        return `/kpi/trandline/data${suffix}`;
+      },
+      providesTags: ["TrendlineData"],
+      transformResponse: (resp) => {
+        const weekly = Array.isArray(resp?.weekly_trends) ? resp.weekly_trends : [];
+        const monthly = Array.isArray(resp?.monthly_trends) ? resp.monthly_trends : [];
+        const metadata = resp?.metadata || null;
+        return {
+          weekly,
+          monthly,
+          metadata,
+        };
+      },
+      transformErrorResponse: (response) => {
+        console.error("❌ KPI Trendline API Error:", response);
+        return response;
+      },
+    }),
+
+    getKpiMonths: build.query({
+      query: () => "/kpi/dropdown/month",
+      providesTags: ["Months"],
+      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+    }),
+
+    getKpiChannels: build.query({
+      query: ({ month } = {}) => {
+        const q = new URLSearchParams();
+        (Array.isArray(month) ? month : [month]).forEach((m) => {
+          if (m && m !== "Overall" && m !== "All") q.append("month", m);
+        });
+        const suffix = q.toString() ? `?${q.toString()}` : "";
+        return `/kpi/dropdown/channel${suffix}`;
+      },
+      providesTags: ["Channels"],
+      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+    }),
+
+    getKpiProductH1s: build.query({
+      query: ({ month, channel } = {}) => {
+        const q = new URLSearchParams();
+        (Array.isArray(month) ? month : [month]).forEach((m) => {
+          if (m && m !== "Overall" && m !== "All") q.append("month", m);
+        });
+        (Array.isArray(channel) ? channel : [channel]).forEach((c) => {
+          if (c && c !== "Overall" && c !== "All") q.append("channel", c);
+        });
+        const suffix = q.toString() ? `?${q.toString()}` : "";
+        return `/kpi/dropdown/product_h1${suffix}`;
+      },
+      providesTags: ["ProductH1s"],
+      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+    }),
+
+    getKpiBrandH2s: build.query({
+      query: ({ month, channel, productH1 } = {}) => {
+        const q = new URLSearchParams();
+        (Array.isArray(month) ? month : [month]).forEach((m) => {
+          if (m && m !== "Overall" && m !== "All") q.append("month", m);
+        });
+        (Array.isArray(channel) ? channel : [channel]).forEach((c) => {
+          if (c && c !== "Overall" && c !== "All") q.append("channel", c);
+        });
+        (Array.isArray(productH1) ? productH1 : [productH1]).forEach((p) => {
+          if (p && p !== "Overall" && p !== "All") q.append("product_h1", p);
+        });
+        const suffix = q.toString() ? `?${q.toString()}` : "";
+        return `/kpi/dropdown/brand_h2${suffix}`;
+      },
+      providesTags: ["BrandH2s"],
+      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+    }),
+
+    getKPIBenchmarkingOne: build.query({
+      query: () => "/screen1-benchmarking",
+      providesTags: ["KPIBenchmarking"],
+      transformResponse: (response) => response,
+    }),
+
+    getKpiDropdown: build.query({
+      query: () => "/screen2-kpi-dropdown",
+      providesTags: ["KpiDropdown"],
+      transformResponse: (response) => response,
+      transformErrorResponse: (response) => {
+        console.error("❌ KPI Dropdown API Error:", response);
+        return response;
+      },
+    }),
+
+    getKPIBenchmarkingTwo: build.query({
+      query: (payload) => ({
+        url: "/screen2-benchmarking",
+        method: "POST",
+        body: payload,
+      }),
+      providesTags: ["KPIBenchmarking"],
+      transformResponse: (raw) => {
+        if (!raw || typeof raw !== "object") {
+          return {
+            "KPI Payload": [],
+            "Dropdown Structure": {},
+            "Overall Insight": "",
+          };
+        }
+
+        const kpiPayload =
+          raw["KPI Payload"] ||
+          raw.screen2_data?.["KPI Payload"] ||
+          raw.kpi_payload ||
+          [];
+
+        const dropdownStructure =
+          raw["Dropdown Structure"] ||
+          raw.structure_data ||
+          raw.screen2_data?.["Dropdown Structure"] ||
+          {};
+
+        const overallInsight =
+          raw["Overall Insight"] ||
+          raw.screen2_data?.["Overall Insight"] ||
+          "";
+
+        return {
+          "KPI Payload": Array.isArray(kpiPayload) ? kpiPayload : [],
+          "Dropdown Structure": dropdownStructure,
+          "Overall Insight": overallInsight,
+        };
+      },
+    }),
+
+    getMaturityAssessment: build.query({
+      query: () => "/maturity-assessment",
+      providesTags: ["MaturityAssessmentData"],
+      transformResponse: (rawResponse) => {
+        if (!rawResponse || typeof rawResponse !== "object") {
+          return {
+            l1CapabilityTracking: null,
+            l1l2CapabilityTracking: null,
+            recommendations: [],
+          };
+        }
+
+        return {
+          l1CapabilityTracking: rawResponse.l1_capability_tracking ?? null,
+          l1l2CapabilityTracking: rawResponse.l1_l2_capability_tracking ?? null,
+          recommendations: Array.isArray(rawResponse.maturity_leading_practices)
+            ? rawResponse.maturity_leading_practices
+            : [],
+        };
+      },
+    }),
+
+    getFinancialAnalysis: build.query({
+      query: () => "/financial-analyze",
+      providesTags: [{ type: "FinancialAnalysis", id: "SINGLE" }],
+      refetchOnMountOrArgChange: false,
+      refetchOnFocus: false,
+      transformResponse: (raw) => ({
+        data: raw?.data ?? null,
+        insights: raw?.insights ?? [],
+      }),
+    }),
+
+    getRecommendations: build.query({
+      query: () => "/recomendation",
+      providesTags: ["Recommendations"],
+      transformResponse: (json) => {
+        const arr = Array.isArray(json.roadmap_json)
+          ? json.roadmap_json
+          : Array.isArray(json.content)
+            ? json.content
+            : [];
+        const recommendations = [];
+        Object.entries(arr).forEach(([_, content]) => {
+          if (typeof content === "object" && content !== null) {
+            [
+              "Short-term Recommendation",
+              "Mid-term Recommendation",
+              "Long-term Recommendation",
+            ].forEach((term) => {
+              if (content[term]) {
+                const recs = Array.isArray(content[term])
+                  ? content[term]
+                  : content[term]
+                    .split(/\n|,/)
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                recs.forEach((text) => {
+                  recommendations.push({
+                    category: content["Assessment"],
+                    term,
+                    text,
+                    "Level 1 Category": content["Level 1 Category"],
+                    Enhancedhypothesis: content["Enhanced_hypothesis"],
+                  });
+                });
+              }
+            });
+          }
+        });
+
+        return {
+          recommendations,
+          roadmap_json: json.roadmap_json || null,
+          raw: json,
+        };
+      },
+    }),
+
+    getBusinessCase: build.query({
+      query: () => "/business-case",
+      providesTags: ["BusinessCase"],
+      transformResponse: (result) => result,
+    }),
+
+    getExecutiveSummary: build.query({
+      query: () => "/executive-summary",
+      providesTags: ["ExecutiveSummary"],
+      transformResponse: (json) => json ?? null,
+    }),
+
+    downloadPpt: build.mutation({
+      query: () => ({
+        url: "/generate-ppt/download",
+        method: "GET",
+        responseHandler: async (response) => {
+          const blob = await response.blob();
+
+          let fileName = "SC Rapid Diagnostic Assessment Report.pptx";
+
+          const disposition = response.headers.get("Content-Disposition");
+          if (disposition && disposition.includes("filename=")) {
+            fileName = disposition.split("filename=")[1].replace(/"/g, "");
+          }
+
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+
+          return { success: true };
+        },
+        cache: "no-cache",
+      }),
+    }),
+
+    uploadPpt: build.mutation({
+      query: (formData) => ({
+        url: "/upload-ppt/",
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      }),
+      invalidatesTags: [
+        "ExecutiveSummary",
+        "Recommendations",
+        "BusinessCase",
+        "FinancialAnalysis",
+      ],
+    }),
+
+// Replace getChatThreads endpoint
+getChatThreads: build.query({
+  query: () => "/chat/history/threads",
+  providesTags: ["ChatHistory"],
+  transformResponse: (resp) => {
+    const threadsMap = {};
+    (resp?.threads || []).forEach((t) => {
+      threadsMap[t.thread_id] = {
+        threadId: t.thread_id,
+        // ✅ Backend thread list response — try every possible title field
+        title:
+          t.title ||
+          t.first_message ||
+          t.preview ||
+          t.summary ||
+          t.name ||
+          null, // null = needs to be loaded
+        createdAt: t.created_at,
+        lastMessageAt: t.last_message_at,
+        messages: [],
+      };
+    });
+    return threadsMap;
+  },
+}),
+
+    // ── GET messages of a specific thread ───────────────────────
+    getChatThreadMessages: build.query({
+      query: (threadId) => `/chat/history/${threadId}`,
+      providesTags: (result, error, threadId) => [
+        { type: "ChatHistory", id: threadId },
+      ],
+      transformResponse: (resp) => resp?.messages || [],
+      transformErrorResponse: (response) => {
+        console.error("❌ Chat Thread Messages API Error:", response);
+        return response;
+      },
+    }),
+
+    // ── DELETE a specific thread ─────────────────────────────────
+    deleteChatThread: build.mutation({
+      query: (threadId) => ({
+        url: `/chat/history/${threadId}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["ChatHistory"],
+      transformErrorResponse: (response) => {
+        console.error("❌ Delete Chat Thread API Error:", response);
+        return response;
+      },
+    }),
+
+    // ── POST send a chat message ─────────────────────────────────
+    sendChatMessage: build.mutation({
+      query: ({ message, threadId }) => ({
+        url: "/chat",
+        method: "POST",
+        body: {
+          user_message: message,
+          thread_id: threadId || undefined,
+        },
+      }),
+      invalidatesTags: ["ChatHistory"],
+      transformErrorResponse: (response) => {
+        console.error("❌ Send Chat Message API Error:", response);
+        return response;
+      },
+    }),
+
+  }),
+  extractRehydrationInfo(action, { reducerPath }) {
+    if (action.type === REHYDRATE) {
+      return action.payload?.[reducerPath] ?? undefined;
+    }
+    return undefined;
+  },
+});
+
+// --------------------------
+// EXPORT HOOKS
+// --------------------------
+export const {
+  useUploadFileMutation,
+  useGetKpiCalculationQuery,
+  useGetKpiWaterfallDataQuery,
+  useGetKpiTrendlineDataQuery,
+  useGetKpiMonthsQuery,
+  useGetKpiChannelsQuery,
+  useGetKpiProductH1sQuery,
+  useGetKpiBrandH2sQuery,
+  useGetKPIBenchmarkingOneQuery,
+  useGetKPIBenchmarkingTwoQuery,
+  useGetMaturityAssessmentQuery,
+  useGetFinancialAnalysisQuery,
+  useGetRecommendationsQuery,
+  useGetBusinessCaseQuery,
+  useGetExecutiveSummaryQuery,
+  useDownloadPptMutation,
+  useUploadPptMutation,
+  useGetKpiDropdownQuery,
+  useGetChatThreadsQuery,
+  useGetChatThreadMessagesQuery,
+  useDeleteChatThreadMutation,
+  useSendChatMessageMutation,
+} = kpiApi;
+
+
+--
+
+
 // src/components/chatbot/MethodOneVirtualAssistant.jsx
-import React, {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-} from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import BotLoader from "../common/BotLoader";
 import { useUser } from "../usecontext/UserContext";
@@ -42,28 +961,28 @@ const MethodOneVirtualAssistant = ({
   // ✅ Always call hook
   const chatHook = useChat(user, getAccessToken);
   const {
-    chatHistory,
-    loading,
-    threadsLoading,
-    error,
-    sendMessage,
-    clearChat,
-    threadId,
-    conversationsByThread,
-    loadThreadHistory,
-    removeThread,
-  } = chatHook || {
-    chatHistory: [],
-    loading: false,
-    threadsLoading: false,
-    error: null,
-    sendMessage: async () => {},
-    clearChat: () => {},
-    threadId: null,
-    conversationsByThread: {},
-    loadThreadHistory: () => {},
-    removeThread: async () => {},
-  };
+  chatHistory,
+  loading,
+  threadsLoading,
+  error,
+  sendMessage,
+  clearChat,
+  threadId,
+  conversationsByThread,
+  loadThreadHistory,
+  removeThread,
+} = chatHook || {
+  chatHistory: [],
+  loading: false,
+  threadsLoading: false,
+  error: null,
+  sendMessage: async () => {},
+  clearChat: () => {},
+  threadId: null,
+  conversationsByThread: {},
+  loadThreadHistory: () => {},
+  removeThread: async () => {},
+};
 
   const [input, setInput] = useState(isFullScreen ? "" : initialMsg);
   const [showChatSidebar, setShowChatSidebar] = useState(true);
@@ -86,27 +1005,13 @@ const MethodOneVirtualAssistant = ({
           .slice(0, 2)
       : "GU";
 
-  // ✅ MEMOIZED VISIBLE HISTORY: Prevents recalculation on every input change
-  const visibleChatHistory = useMemo(() => {
-    return (chatHistory || []).filter((c) => {
-      const hasText = !!String(c?.message ?? "").trim();
-      const hasChart =
-        !!c?.chartData &&
-        (Array.isArray(c.chartData)
-          ? c.chartData.length > 0
-          : Object.keys(c.chartData || {}).length > 0);
-
-      return hasText || hasChart;
-    });
-  }, [chatHistory]);
-
   // Auto-scroll chat
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop =
         chatContainerRef.current.scrollHeight;
     }
-  }, [visibleChatHistory, loading]);
+  }, [chatHistory, loading]);
 
   // Focus input
   useEffect(() => {
@@ -128,13 +1033,17 @@ const MethodOneVirtualAssistant = ({
         },
         {
           icon: (
-            <span className="material-symbols-outlined fs-3">attach_money</span>
+            <span className="material-symbols-outlined fs-3">
+              attach_money
+            </span>
           ),
           label: "Take me to the business case",
           tab: "business-case",
         },
         {
-          icon: <span className="material-symbols-outlined fs-3">balance</span>,
+          icon: (
+            <span className="material-symbols-outlined fs-3">balance</span>
+          ),
           label: "Show me the peer financial analysis",
           tab: "peer-financial-analysis",
         },
@@ -179,7 +1088,8 @@ const MethodOneVirtualAssistant = ({
             "/assessment?tab=kpi-benchmarking",
           "Show me the peer financial analysis":
             "/assessment?tab=peer-financial-analysis",
-          "Download the workbench report": "/assessment?tab=executive-summary",
+          "Download the workbench report":
+            "/assessment?tab=executive-summary",
           "Take me to the business case": "/assessment?tab=business-case",
         }
       : {
@@ -216,13 +1126,14 @@ const MethodOneVirtualAssistant = ({
   // Submit handler
   const handleSubmit = useCallback(
     async (msg) => {
-      const userMsg = msg != null ? String(msg).trim() : (input || "").trim();
+      const userMsg =
+        msg != null ? String(msg).trim() : (input || "").trim();
       if (!userMsg) return;
 
       setInput("");
       await sendMessage(userMsg);
     },
-    [input, sendMessage],
+    [input, sendMessage]
   );
 
   const handleOptionClick = (label) => {
@@ -271,7 +1182,22 @@ const MethodOneVirtualAssistant = ({
   const sidebarWidth = 320;
   const headerHeight = 56;
   const mainWidth = isCollapsed ? 400 : 860;
-  const minHeightValue = isCompact ? "auto" : isFullScreen ? "92vh" : 470;
+  const minHeightValue = isCompact
+    ? "auto"
+    : isFullScreen
+    ? "92vh"
+    : 470;
+
+  const visibleChatHistory = (chatHistory || []).filter((c) => {
+    const hasText = !!String(c?.message ?? "").trim();
+    const hasChart =
+      !!c?.chartData &&
+      (Array.isArray(c.chartData)
+        ? c.chartData.length > 0
+        : Object.keys(c.chartData || {}).length > 0);
+
+    return hasText || hasChart;
+  });
 
   return (
     <div
@@ -281,8 +1207,8 @@ const MethodOneVirtualAssistant = ({
         boxShadow: isCompact ? "none" : "0 6px 40px rgba(137,27,247,0.14)",
         minHeight: isMaximized ? "100vh" : minHeightValue,
         minWidth: isMaximized ? "100vw" : undefined,
-        width: isMaximized ? "100vw" : undefined, // Fixed logic for full width
-        height: isMaximized ? "100vh" : undefined,
+        width: isMaximized ? "50vw" : undefined,
+        height: isMaximized ? "auto" : undefined,
         position: isMaximized ? "fixed" : "relative",
         left: isMaximized ? 0 : undefined,
         top: isMaximized ? 0 : undefined,
@@ -291,48 +1217,83 @@ const MethodOneVirtualAssistant = ({
       }}
     >
       {/* HEADER */}
-      <div
-        className={`virtual-assistant-header ${isFullScreen ? "fullscreen-header" : ""}`}
-        style={{ height: headerHeight, display: isCompact ? "none" : "flex" }}
-      >
-        <div className="header-content">
-          <span className="material-symbols-outlined fs-3 me-2">robot_2</span>
-          Rapid Supply Chain Diagnostic Assistant
-        </div>
+      {isFullScreen ? (
         <div
-          className={`header-actions ${isFullScreen ? "header-actions-methodone" : "header-actions-methodtwo"}`}
+          className="virtual-assistant-header fullscreen-header"
+          style={{ height: headerHeight }}
         >
-          <button
-            aria-label={isMaximized ? "Restore" : "Maximize"}
-            className="maximize-button"
-            onClick={() => setIsMaximized((x) => !x)}
-          >
-            <span className="material-symbols-outlined">
-              {isMaximized ? "fullscreen_exit" : "fullscreen"}
+          <div className="header-content">
+            <span className="material-symbols-outlined fs-3 me-2">
+              robot_2
             </span>
-          </button>
-          {onClose && (
-            <button
-              onClick={handleClose}
-              className={`close-button ${isFullScreen ? "mb-0" : ""}`}
-            >
-              ×
-            </button>
-          )}
+            Rapid Supply Chain Diagnostic Assistant
+          </div>
+          <div className="header-actions header-actions-methodone">
+            {!onClose && (
+              <button
+                aria-label={isMaximized ? "Restore" : "Maximize"}
+                className="maximize-button"
+                onClick={() => setIsMaximized((x) => !x)}
+              >
+                <span className="material-symbols-outlined">
+                  {isMaximized ? "fullscreen_exit" : "fullscreen"}
+                </span>
+              </button>
+            )}
+            {onClose && (
+              <button
+                onClick={handleClose}
+                className="close-button mb-0"
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div
+          className="virtual-assistant-header"
+          style={{ display: isCompact ? "none" : "flex" }}
+        >
+          <div className="header-content">
+            <span className="material-symbols-outlined fs-3">robot_2</span>
+            Rapid Supply Chain Diagnostic Assistant
+          </div>
+          <div className="header-actions header-actions-methodtwo">
+            <button
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              className="maximize-button"
+              onClick={() => setIsMaximized((x) => !x)}
+            >
+              <span className="material-symbols-outlined">
+                {isMaximized ? "fullscreen_exit" : "fullscreen"}
+              </span>
+            </button>
+            {onClose && (
+              <button onClick={handleClose} className="close-button">
+                ×
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* MAIN WRAPPER */}
       <div
         className="main-content-wrapper"
         style={{
           paddingTop: isFullScreen ? 50 : 0,
-          height: isFullScreen ? `calc(100vh - ${headerHeight}px)` : "auto",
+          height: isFullScreen
+            ? `calc(100vh - ${headerHeight}px)`
+            : "auto",
         }}
       >
         {/* CHAT SIDEBAR */}
         {isFullScreen && showChatSidebar && (
-          <div className="chat-history-sidebar" style={{ width: sidebarWidth }}>
+          <div
+            className="chat-history-sidebar"
+            style={{ width: sidebarWidth }}
+          >
             <div className="sidebar-header">
               <span>Chats</span>
               <button
@@ -355,99 +1316,79 @@ const MethodOneVirtualAssistant = ({
               </button>
             </div>
 
-            <div className="sidebar-content">
-              {threadsLoading ? (
-                <div
-                  style={{
-                    padding: "16px",
-                    color: "#888",
-                    textAlign: "center",
-                  }}
-                >
-                  Loading conversations...
-                </div>
-              ) : Object.values(conversationsByThread || {}).length === 0 ? (
-                <div
-                  style={{
-                    padding: "16px",
-                    color: "#aaa",
-                    textAlign: "center",
-                  }}
-                >
-                  No conversations yet
-                </div>
-              ) : (
-                Object.values(conversationsByThread || {})
-                  .sort(
-                    (a, b) =>
-                      new Date(b?.lastMessageAt || b?.createdAt || 0) -
-                      new Date(a?.lastMessageAt || a?.createdAt || 0),
-                  )
-                  .map((conv) => {
-                    // ✅ FIXED TITLE LOGIC
-                    // Priority: 1. Cached User Msg, 2. Backend Metadata Title, 3. Thread ID
-                    const firstUserMsg = conv.messages?.find(
-                      (m) => m.from === "user",
-                    )?.message;
-                    const displayTitle =
-                      firstUserMsg ||
-                      conv.title ||
-                      `Chat ${conv.threadId?.substring(0, 8)}`;
+            {/* CHAT SIDEBAR - replace the existing sidebar-content div */}
+{/* CHAT SIDEBAR - replace the existing sidebar-content div */}
+<div className="sidebar-content">
+  {threadsLoading ? (
+    <div style={{ padding: "16px", color: "#888", textAlign: "center" }}>
+      Loading conversations...
+    </div>
+  ) : Object.values(conversationsByThread || {}).length === 0 ? (
+    <div style={{ padding: "16px", color: "#aaa", textAlign: "center" }}>
+      No conversations yet
+    </div>
+  ) : (
+    Object.values(conversationsByThread || {})
+      .sort((a, b) =>
+        new Date(a?.lastMessageAt || a?.createdAt || 0) 
+          ? 1
+          : -1
+      )
+      .map((conv) => {
+  // ✅ Use backend title directly — no need to load messages first
+  // Falls back to shortened ID only if backend didn't send a title
+  const displayTitle =
+    conv.title ||
+    conv.messages?.find((m) => m.from === "user")?.message ||
+    `Chat ${conv.threadId?.substring(0, 8)}...`;
 
-                    const truncated =
-                      displayTitle.length > 40
-                        ? `${displayTitle.substring(0, 40)}...`
-                        : displayTitle;
+  const truncated =
+    displayTitle.length > 40
+      ? `${displayTitle.substring(0, 40)}...`
+      : displayTitle;
 
-                    return (
-                      <div
-                        key={conv.threadId}
-                        className={`sidebar-item${conv.threadId === threadId ? " active" : ""}`}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          cursor: "pointer",
-                        }}
-                        onClick={() => loadThreadHistory(conv.threadId)}
-                      >
-                        <div
-                          className="sidebar-item-title"
-                          style={{
-                            flex: 1,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {truncated}
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeThread(conv.threadId);
-                          }}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            cursor: "pointer",
-                            color: "#aaa",
-                            padding: "2px 4px",
-                            flexShrink: 0,
-                          }}
-                          title="Delete conversation"
-                        >
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: 16 }}
-                          >
-                            delete
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })
-              )}
-            </div>
+  return (
+    <div
+      key={conv.threadId}
+      className={`sidebar-item${conv.threadId === threadId ? " active" : ""}`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        cursor: "pointer",
+      }}
+      onClick={() => loadThreadHistory(conv.threadId)}
+    >
+      <div
+        className="sidebar-item-title"
+        style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}
+      >
+        {truncated}
+      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          removeThread(conv.threadId);
+        }}
+        style={{
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
+          color: "#aaa",
+          padding: "2px 4px",
+          flexShrink: 0,
+        }}
+        title="Delete conversation"
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+          delete
+        </span>
+      </button>
+    </div>
+  );
+})
+  )}
+</div>
           </div>
         )}
 
@@ -490,7 +1431,9 @@ const MethodOneVirtualAssistant = ({
                 padding: isCompact ? "12px 16px 5px" : "17px 21px 5px",
               }}
             >
-              <div className="welcome-message">Welcome {displayName}!</div>
+              <div className="welcome-message">
+                Welcome {displayName}!
+              </div>
               <div
                 className="options-grid"
                 style={{
@@ -542,8 +1485,12 @@ const MethodOneVirtualAssistant = ({
                 <div
                   className="chat-avatar"
                   style={{
-                    background: c.from === "user" ? "#eceefd" : "#eedbfc",
-                    margin: c.from === "user" ? "0 0 0 8px" : "0 8px 0 0",
+                    background:
+                      c.from === "user" ? "#eceefd" : "#eedbfc",
+                    margin:
+                      c.from === "user"
+                        ? "0 0 0 8px"
+                        : "0 8px 0 0",
                   }}
                 >
                   {c.from === "user" ? (
@@ -558,8 +1505,10 @@ const MethodOneVirtualAssistant = ({
                 <div
                   className={`chat-bubble ${c.from}`}
                   style={{
-                    background: c.from === "bot" ? "#f7f2fc" : "#e8edfd",
-                    color: c.from === "bot" ? "#4a287c" : "#7e2efc",
+                    background:
+                      c.from === "bot" ? "#f7f2fc" : "#e8edfd",
+                    color:
+                      c.from === "bot" ? "#4a287c" : "#7e2efc",
                     borderRadius:
                       c.from === "user"
                         ? "14px 14px 2px 14px"
@@ -715,4 +1664,4 @@ const MethodOneVirtualAssistant = ({
 
 export default MethodOneVirtualAssistant;
 
-return threadsMap;
+
