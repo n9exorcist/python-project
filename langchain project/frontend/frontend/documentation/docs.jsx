@@ -1747,3 +1747,150 @@ const MethodOneVirtualAssistant = ({
 };
 
 export default MethodOneVirtualAssistant;
+
+--
+
+Request URL
+
+http://localhost:8000/chat/history/threads
+
+
+
+Response:
+
+
+{
+    "user_id": "narayanan.selvaraj",
+    "threads": [
+        {
+            "thread_id": "27ff70ff-c6da-487a-95c9-64411b25340e",
+            "title": "show me the waterfall chart?",
+            "message_count": 60,
+            "last_updated": "2026-05-15T06:28:14.025252"
+        },
+        {
+            "thread_id": "3a4da52a-ee75-4481-99ce-82eebfbe8bb5",
+            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
+            "message_count": 1,
+            "last_updated": "2026-05-15T06:27:19.545184"
+        },
+        {
+            "thread_id": "631a1503-d00c-441d-8527-48112a07faac",
+            "title": "What has been OTIF performance for e-commerce and...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T11:08:05.535502"
+        },
+        {
+            "thread_id": "15313b2f-533a-4b54-8662-5c6ee9ccb36e",
+            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T11:07:53.624647"
+        },
+        {
+            "thread_id": "6e338fac-5596-440e-b1f2-ff6b67c0bbd3",
+            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T11:07:48.498685"
+        },
+        {
+            "thread_id": "6c6d59ad-7f6b-4d69-be9f-896cf55540d6",
+            "title": "What has been OTIF performance for e-commerce and...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:21:56.373320"
+        },
+        {
+            "thread_id": "353d1612-e172-4a4a-b2c8-bfda54a5e06d",
+            "title": "What has been the Inventory % of Revenue at Plant Level...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:19:35.435516"
+        },
+        {
+            "thread_id": "9293b36c-8443-49d9-8fb8-04a9a22fde2f",
+            "title": "What has been the Inventory % of Revenue at Plant Level...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:18:33.218735"
+        },
+        {
+            "thread_id": "c6733df3-eb6b-4447-a01b-edec680e78ab",
+            "title": "What has been the Inventory % of Revenue at Plant Level...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:17:34.464823"
+        },
+        {
+            "thread_id": "c8be53e9-79ca-45cd-8625-263f1060fbb2",
+            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:16:28.352619"
+        },
+        {
+            "thread_id": "7876757f-aad9-4496-a856-aec792d5311e",
+            "title": "What has been OTIF performance for e-commerce and...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:16:17.464131"
+        },
+        {
+            "thread_id": "f910c04b-a87c-4cec-a04c-1f4666baba74",
+            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:05:48.197888"
+        },
+        {
+            "thread_id": "f9cec032-0dec-41ff-a552-f70531590fa3",
+            "title": "Show the past 3-year forecast accuracy trend for CPG...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:05:31.635029"
+        },
+        {
+            "thread_id": "9de1cb1a-1c15-4fd4-8afe-7ca0645e5e2d",
+            "title": "What has been the Inventory % of Revenue at Plant Level...",
+            "message_count": 1,
+            "last_updated": "2026-05-13T06:04:30.790358"
+        },
+        {
+            "thread_id": "4decc4ab-449d-4666-be7a-e45cfd6791b2",
+            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
+            "message_count": 1,
+            "last_updated": "2026-05-11T08:14:00.160765"
+        },
+        {
+            "thread_id": "a01ddf00-dd09-4543-bfc9-900049fc1a8c",
+            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
+            "message_count": 1,
+            "last_updated": "2026-05-11T08:13:49.347907"
+        },
+        {
+            "thread_id": "5bde9b98-bb5b-4b72-9b4b-d6b00bc495b2",
+            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
+            "message_count": 1,
+            "last_updated": "2026-05-11T08:13:13.317816"
+        },
+        {
+            "thread_id": "86bc1abb-5fe9-4749-aa0a-8d84a72a41b0",
+            "title": "What has been the Inventory % of Revenue at Plant Level...",
+            "message_count": 1,
+            "last_updated": "2026-05-11T08:03:45.356758"
+        },
+        {
+            "thread_id": "70304352-bd4a-452e-ae64-93c4ca6a23e9",
+            "title": "Show the past 3-year forecast accuracy trend for CPG...",
+            "message_count": 1,
+            "last_updated": "2026-05-11T08:02:35.216775"
+        },
+        {
+            "thread_id": "7c04c47d-9e3e-42e6-bc5e-cf0206862b32",
+            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
+            "message_count": 1,
+            "last_updated": "2026-05-11T07:31:57.059870"
+        }
+    ],
+    "count": 20,
+    "offset": 0,
+    "limit": 20
+}
+---
+Request URL
+http://localhost:8000/chat
+
+Request payload:
+
+{"user_message":"Show Supply Chain FTEs per $B revenue for Modern Trade channel over the past 3 years and suggest mid-term efficiency improvements"}
