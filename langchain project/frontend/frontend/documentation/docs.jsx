@@ -1,444 +1,3 @@
-// src/hooks/useChat.js
-import { useState, useCallback, useEffect } from "react";
-import {
-  useGetChatThreadsQuery,
-  useDeleteChatThreadMutation,
-  useSendChatMessageMutation,
-  kpiApi,
-} from "../services/kpiApi";
-import { useDispatch } from "react-redux";
-
-const useChat = (user) => {
-  const dispatch = useDispatch();
-  const [chatHistory, setChatHistory] = useState([]);
-  const [error, setError] = useState(null);
-  const [threadId, setThreadId] = useState(null);
-  const [conversationsByThread, setConversationsByThread] = useState({});
-  const [isLoadingThread, setIsLoadingThread] = useState(false);
-
-  // ── 1. Fetch all threads on mount ────────────────────────────
-  const { data: threadsMap, isLoading: threadsLoading } =
-    useGetChatThreadsQuery(undefined, { skip: !user });
-
-  // ── 2. Prefetch titles for ALL threads on load ───────────────
-  useEffect(() => {
-    if (!threadsMap) return;
-
-    const prefetchAllTitles = async () => {
-      const allThreads = Object.values(threadsMap);
-
-      const results = await Promise.allSettled(
-        allThreads.map(async (thread) => {
-          // Skip if already has a title
-          if (thread.title) {
-            return { threadId: thread.threadId, title: thread.title };
-          }
-
-          try {
-            const result = await dispatch(
-              kpiApi.endpoints.getChatThreadMessages.initiate(
-                thread.threadId,
-                { forceRefetch: false }
-              )
-            );
-
-            // ✅ FIX: Guard against 404 / any error — thread exists in list
-            // but may have no messages (system-only or deleted messages)
-            if (result.error) {
-              // Silently skip — don't crash or surface 404 to user
-              return { threadId: thread.threadId, title: null };
-            }
-
-            if (result.data && result.data.length > 0) {
-              const firstUserMsg = result.data.find(
-                (m) =>
-                  m.role === "user" &&
-                  m.content &&
-                  m.content !== "null" &&
-                  m.content.trim() !== ""
-              );
-
-              return {
-                threadId: thread.threadId,
-                title: firstUserMsg?.content || null,
-              };
-            }
-
-            // ✅ FIX: Empty array returned (backend now returns 200 + [] instead of 404)
-            return { threadId: thread.threadId, title: null };
-          } catch (e) {
-            // Silently ignore network / parse errors per thread
-            return { threadId: thread.threadId, title: null };
-          }
-        })
-      );
-
-      // Build updated map with all titles
-      const updatedMap = { ...threadsMap };
-      results.forEach((result) => {
-        if (result.status === "fulfilled" && result.value?.title) {
-          const { threadId: tId, title } = result.value;
-          updatedMap[tId] = {
-            ...updatedMap[tId],
-            title,
-          };
-        }
-      });
-
-      setConversationsByThread(updatedMap);
-    };
-
-    prefetchAllTitles();
-  }, [threadsMap, dispatch]);
-
-  // ── 3. Normalize raw backend messages ────────────────────────
-  const normalizeMessages = useCallback((rawMessages) => {
-    return (rawMessages || [])
-      .filter((msg) => msg?.role !== "system")
-      .map((msg) => {
-        const role = msg?.role || "assistant";
-        const metadata = msg?.metadata || {};
-        const assistantResponse = metadata?.assistant_response || {};
-        const chartSpec = assistantResponse?.chart_spec || {};
-
-        let parsedContent = msg?.content;
-        let chartData = null;
-        let chartType = null;
-
-        // Handle null content from backend
-        if (parsedContent === null || parsedContent === "null") {
-          parsedContent = "";
-        }
-
-        // Detect JSON chart payloads stored as strings
-        if (typeof parsedContent === "string") {
-          const trimmed = parsedContent.trim();
-          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (parsed.weekly_trends || parsed.monthly_trends) {
-                chartData = parsed;
-                chartType = "line";
-                parsedContent = "Here is the trendline chart:";
-              } else if (Array.isArray(parsed)) {
-                chartData = parsed;
-                chartType = "bar";
-                parsedContent = "Here is the chart:";
-              }
-            } catch (e) {
-              // not JSON, keep as text
-            }
-          }
-        }
-
-        // Handle financial_chart type
-        if (!chartData && assistantResponse?.type === "financial_chart") {
-          chartData = Array.isArray(assistantResponse?.data)
-            ? assistantResponse.data
-            : assistantResponse?.data || null;
-          chartType = chartSpec?.chart_type || "bar";
-        }
-
-        const finalMessage =
-          typeof parsedContent === "string"
-            ? parsedContent.trim()
-            : parsedContent != null
-            ? String(parsedContent).trim()
-            : "";
-
-        return {
-          from: role === "user" ? "user" : "bot",
-          message: finalMessage,
-          timestamp: msg?.timestamp,
-          chartData,
-          chartType,
-          state: metadata?.state || null,
-        };
-      })
-      .filter((msg) => !!msg.message || !!msg.chartData);
-  }, []);
-
-  // ── 4. RTK mutations ──────────────────────────────────────────
-  const [sendChatMessageMutation, { isLoading: sendLoading }] =
-    useSendChatMessageMutation();
-  const [deleteChatThreadMutation] = useDeleteChatThreadMutation();
-
-  // ── 5. Send a message ─────────────────────────────────────────
-  const sendMessage = useCallback(
-    async (message) => {
-      if (!message.trim()) return;
-
-      setChatHistory((prev) => [...prev, { from: "user", message }]);
-      setError(null);
-
-      try {
-        const data = await sendChatMessageMutation({
-          message,
-          threadId,
-        }).unwrap();
-
-        const effectiveThreadId = data.thread_id || threadId || "temp_id";
-
-        const rawResponse = data.assistant_response;
-        let textForMarkdown = "I have generated the analysis below:";
-        let chartDataForRenderer = null;
-        let finalChartType = data.state?.chart_intent?.chart_type || "bar";
-
-        if (rawResponse?.type === "financial_text") {
-          textForMarkdown = [rawResponse.insight, rawResponse.key_takeaway]
-            .filter(Boolean)
-            .join("\n\n");
-          chartDataForRenderer = null;
-          finalChartType = null;
-        } else if (rawResponse?.type === "financial_chart") {
-          finalChartType = rawResponse.chart_spec?.chart_type || finalChartType;
-          chartDataForRenderer = Array.isArray(rawResponse.data)
-            ? rawResponse.data
-            : [];
-          textForMarkdown = [
-            rawResponse.chart_spec?.title,
-            rawResponse.chart_spec?.description,
-          ]
-            .filter(Boolean)
-            .join("\n\n");
-        } else if (typeof rawResponse === "string") {
-          textForMarkdown = rawResponse;
-        } else if (Array.isArray(rawResponse)) {
-          chartDataForRenderer = rawResponse;
-        } else if (rawResponse && typeof rawResponse === "object") {
-          chartDataForRenderer = rawResponse;
-        }
-
-        const botMessage = {
-          from: "bot",
-          message: textForMarkdown,
-          chartData: chartDataForRenderer,
-          chartType: finalChartType,
-          timestamp: data.timestamp,
-          state: data.state,
-        };
-
-        setChatHistory((prev) => {
-          const filtered = prev.filter(
-            (m, i) => !(m.from === "user" && i === prev.length - 1)
-          );
-          return [...filtered, { from: "user", message }, botMessage];
-        });
-
-        if (effectiveThreadId !== threadId) {
-          setThreadId(effectiveThreadId);
-        }
-
-        setConversationsByThread((prev) => {
-          const existing = prev[effectiveThreadId];
-          return {
-            ...prev,
-            [effectiveThreadId]: {
-              threadId: effectiveThreadId,
-              title: existing?.title || message,
-              createdAt: existing?.createdAt || data.timestamp,
-              lastMessageAt: data.timestamp,
-              messages: [
-                ...(existing?.messages || []),
-                { from: "user", message },
-                botMessage,
-              ],
-            },
-          };
-        });
-      } catch (err) {
-        setError(
-          err?.data?.detail || err.message || "An unexpected error occurred."
-        );
-        setChatHistory((prev) => prev.slice(0, -1));
-      }
-    },
-    [sendChatMessageMutation, threadId]
-  );
-
-  // ── 6. Load thread on click ───────────────────────────────────
-  const loadThreadHistory = useCallback(
-    async (tId) => {
-      if (tId === threadId) return;
-
-      setChatHistory([]);
-      setThreadId(tId);
-      setIsLoadingThread(true);
-      setError(null);
-
-      const existing = conversationsByThread[tId];
-      if (existing?.messages?.length > 0) {
-        setChatHistory(existing.messages);
-        setIsLoadingThread(false);
-        return;
-      }
-
-      try {
-        const result = await dispatch(
-          kpiApi.endpoints.getChatThreadMessages.initiate(tId, {
-            forceRefetch: true,
-          })
-        );
-
-        // ✅ FIX: Guard against 404 when loading a thread manually
-        if (result.error) {
-          // Thread exists in sidebar but has no messages on backend
-          setChatHistory([]);
-          setIsLoadingThread(false);
-          return;
-        }
-
-        if (result.data) {
-          const normalized = normalizeMessages(result.data);
-          setChatHistory(normalized);
-
-          const firstUserMsg = result.data.find(
-            (m) =>
-              m.role === "user" &&
-              m.content &&
-              m.content !== "null" &&
-              m.content.trim() !== ""
-          );
-
-          setConversationsByThread((prev) => ({
-            ...prev,
-            [tId]: {
-              ...prev[tId],
-              title:
-                prev[tId]?.title || firstUserMsg?.content || prev[tId]?.title,
-              messages: normalized,
-            },
-          }));
-        } else {
-          setChatHistory([]);
-        }
-      } catch (err) {
-        // ✅ FIX: Don't surface 404 as a user-visible error
-        // It just means the thread has no messages
-        setChatHistory([]);
-      } finally {
-        setIsLoadingThread(false);
-      }
-    },
-    [conversationsByThread, threadId, dispatch, normalizeMessages]
-  );
-
-  // ── 7. Delete a thread ────────────────────────────────────────
-  const removeThread = useCallback(
-    async (tId) => {
-      try {
-        await deleteChatThreadMutation(tId).unwrap();
-        setConversationsByThread((prev) => {
-          const updated = { ...prev };
-          delete updated[tId];
-          return updated;
-        });
-        if (tId === threadId) {
-          setChatHistory([]);
-          setThreadId(null);
-        }
-      } catch (err) {
-        setError("Failed to delete thread.");
-      }
-    },
-    [deleteChatThreadMutation, threadId]
-  );
-
-  // ── 8. New chat ───────────────────────────────────────────────
-  const clearChat = useCallback(() => {
-    setChatHistory([]);
-    setThreadId(null);
-  }, []);
-
-  return {
-    chatHistory,
-    loading: sendLoading || isLoadingThread,
-    threadsLoading,
-    error,
-    sendMessage,
-    clearChat,
-    threadId,
-    setThreadId,
-    conversationsByThread,
-    loadThreadHistory,
-    removeThread,
-  };
-};
-
-export default useChat;
-
---
-
-// src/hooks/useChatApi.js
-// ─────────────────────────────────────────────────────────────
-// This file is the SINGLE SOURCE OF TRUTH for all chat API calls.
-// When backend is ready, only this file needs to change.
-// ─────────────────────────────────────────────────────────────
-
-const BASE_URL = process.env.REACT_APP_API_URL;
-
-// ── Send a message ──────────────────────────────────────────
-export const sendChatMessage = async (message, threadId, token) => {
-  const response = await fetch(`${BASE_URL}/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      user_message: message,
-      thread_id: threadId || undefined,
-    }),
-  });
-
-  if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-  return response.json();
-};
-
-// ── Fetch all threads for the logged-in user ────────────────
-export const fetchAllThreads = async (token) => {
-  const response = await fetch(`${BASE_URL}/chat/history/threads`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-
-  if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-  return response.json(); // { threads: [...] }
-};
-
-// ── Fetch messages of a specific thread ─────────────────────
-export const fetchThreadMessages = async (threadId, token) => {
-  const response = await fetch(`${BASE_URL}/chat/history/${threadId}`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-
-  if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-  return response.json(); // { thread_id, messages: [...] }
-};
-
-// ── Delete a thread ──────────────────────────────────────────
-export const deleteThread = async (threadId, token) => {
-  const response = await fetch(`${BASE_URL}/chat/history/${threadId}`, {
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-
-  if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-  return response.json(); // { status: "deleted" }
-};
-
---
-
 /* eslint-disable no-console */
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { REHYDRATE } from "redux-persist";
@@ -463,7 +22,7 @@ const baseQueryWithAuth = async (args, api, extraOptions) => {
       token = await globalGetAccessToken();
     } else {
       console.warn(
-        "⚠️ No token getter function registered. Call setTokenGetter() inside useUser()"
+        "⚠️ No token getter function registered. Call setTokenGetter() inside useUser()",
       );
     }
   } catch (err) {
@@ -567,13 +126,16 @@ export const kpiApi = createApi({
           if (val && val !== "Overall" && val !== "All") q.append("month", val);
         });
         (Array.isArray(channel) ? channel : [channel]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("channel", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("channel", val);
         });
         (Array.isArray(productH1) ? productH1 : [productH1]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("product_h1", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("product_h1", val);
         });
         (Array.isArray(brandH2) ? brandH2 : [brandH2]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("brand_h2", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("brand_h2", val);
         });
         const suffix = q.toString() ? `?${q.toString()}` : "";
         return `/kpi-calculation${suffix}`;
@@ -599,13 +161,16 @@ export const kpiApi = createApi({
           if (val && val !== "Overall" && val !== "All") q.append("month", val);
         });
         (Array.isArray(channel) ? channel : [channel]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("channel", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("channel", val);
         });
         (Array.isArray(productH1) ? productH1 : [productH1]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("product_h1", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("product_h1", val);
         });
         (Array.isArray(brandH2) ? brandH2 : [brandH2]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("brand_h2", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("brand_h2", val);
         });
         return `/kpi/waterfall/data?${q.toString()}`;
       },
@@ -624,21 +189,28 @@ export const kpiApi = createApi({
           if (val && val !== "Overall" && val !== "All") q.append("month", val);
         });
         (Array.isArray(channel) ? channel : [channel]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("channel", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("channel", val);
         });
         (Array.isArray(productH1) ? productH1 : [productH1]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("product_h1", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("product_h1", val);
         });
         (Array.isArray(brandH2) ? brandH2 : [brandH2]).forEach((val) => {
-          if (val && val !== "Overall" && val !== "All") q.append("brand_h2", val);
+          if (val && val !== "Overall" && val !== "All")
+            q.append("brand_h2", val);
         });
         const suffix = q.toString() ? `?${q.toString()}` : "";
         return `/kpi/trandline/data${suffix}`;
       },
       providesTags: ["TrendlineData"],
       transformResponse: (resp) => {
-        const weekly = Array.isArray(resp?.weekly_trends) ? resp.weekly_trends : [];
-        const monthly = Array.isArray(resp?.monthly_trends) ? resp.monthly_trends : [];
+        const weekly = Array.isArray(resp?.weekly_trends)
+          ? resp.weekly_trends
+          : [];
+        const monthly = Array.isArray(resp?.monthly_trends)
+          ? resp.monthly_trends
+          : [];
         const metadata = resp?.metadata || null;
         return {
           weekly,
@@ -655,7 +227,8 @@ export const kpiApi = createApi({
     getKpiMonths: build.query({
       query: () => "/kpi/dropdown/month",
       providesTags: ["Months"],
-      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+      transformResponse: (resp) =>
+        Array.isArray(resp?.options) ? resp.options : [],
     }),
 
     getKpiChannels: build.query({
@@ -668,7 +241,8 @@ export const kpiApi = createApi({
         return `/kpi/dropdown/channel${suffix}`;
       },
       providesTags: ["Channels"],
-      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+      transformResponse: (resp) =>
+        Array.isArray(resp?.options) ? resp.options : [],
     }),
 
     getKpiProductH1s: build.query({
@@ -684,7 +258,8 @@ export const kpiApi = createApi({
         return `/kpi/dropdown/product_h1${suffix}`;
       },
       providesTags: ["ProductH1s"],
-      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+      transformResponse: (resp) =>
+        Array.isArray(resp?.options) ? resp.options : [],
     }),
 
     getKpiBrandH2s: build.query({
@@ -703,7 +278,8 @@ export const kpiApi = createApi({
         return `/kpi/dropdown/brand_h2${suffix}`;
       },
       providesTags: ["BrandH2s"],
-      transformResponse: (resp) => (Array.isArray(resp?.options) ? resp.options : []),
+      transformResponse: (resp) =>
+        Array.isArray(resp?.options) ? resp.options : [],
     }),
 
     getKPIBenchmarkingOne: build.query({
@@ -751,9 +327,7 @@ export const kpiApi = createApi({
           {};
 
         const overallInsight =
-          raw["Overall Insight"] ||
-          raw.screen2_data?.["Overall Insight"] ||
-          "";
+          raw["Overall Insight"] || raw.screen2_data?.["Overall Insight"] || "";
 
         return {
           "KPI Payload": Array.isArray(kpiPayload) ? kpiPayload : [],
@@ -817,9 +391,9 @@ export const kpiApi = createApi({
                 const recs = Array.isArray(content[term])
                   ? content[term]
                   : content[term]
-                    .split(/\n|,/)
-                    .map((s) => s.trim())
-                    .filter(Boolean);
+                      .split(/\n|,/)
+                      .map((s) => s.trim())
+                      .filter(Boolean);
                 recs.forEach((text) => {
                   recommendations.push({
                     category: content["Assessment"],
@@ -898,31 +472,31 @@ export const kpiApi = createApi({
       ],
     }),
 
-// Replace getChatThreads endpoint
-getChatThreads: build.query({
-  query: () => "/chat/history/threads",
-  providesTags: ["ChatHistory"],
-  transformResponse: (resp) => {
-    const threadsMap = {};
-    (resp?.threads || []).forEach((t) => {
-      threadsMap[t.thread_id] = {
-        threadId: t.thread_id,
-        // ✅ Backend thread list response — try every possible title field
-        title:
-          t.title ||
-          t.first_message ||
-          t.preview ||
-          t.summary ||
-          t.name ||
-          null, // null = needs to be loaded
-        createdAt: t.created_at,
-        lastMessageAt: t.last_message_at,
-        messages: [],
-      };
-    });
-    return threadsMap;
-  },
-}),
+    // Replace getChatThreads endpoint
+    getChatThreads: build.query({
+      query: () => "/chat/history/threads",
+      providesTags: ["ChatHistory"],
+      transformResponse: (resp) => {
+        const threadsMap = {};
+        (resp?.threads || []).forEach((t) => {
+          threadsMap[t.thread_id] = {
+            threadId: t.thread_id,
+            // ✅ Backend thread list response — try every possible title field
+            title:
+              t.title ||
+              t.first_message ||
+              t.preview ||
+              t.summary ||
+              t.name ||
+              null, // null = needs to be loaded
+            createdAt: t.created_at,
+            lastMessageAt: t.last_message_at,
+            messages: [],
+          };
+        });
+        return threadsMap;
+      },
+    }),
 
     // ── GET messages of a specific thread ───────────────────────
     getChatThreadMessages: build.query({
@@ -966,8 +540,6 @@ getChatThreads: build.query({
         return response;
       },
     }),
-
-
   }),
   extractRehydrationInfo(action, { reducerPath }) {
     if (action.type === REHYDRATE) {
@@ -1004,6 +576,160 @@ export const {
   useDeleteChatThreadMutation,
   useSendChatMessageMutation,
 } = kpiApi;
+
+--
+
+// store.js
+import { combineReducers, configureStore } from "@reduxjs/toolkit";
+import { setupListeners } from "@reduxjs/toolkit/query";
+import benchmarkReducer from "./slices/benchmarkSlice";
+import oneGoReducer from "./slices/oneGoSlice";
+import fileUploadReducer from "./slices/fileUploadSlice";
+import tabAccessReducer from "./slices/tabAccessSlice";
+import { kpiApi } from "./services/kpiApi";
+import {
+  persistStore,
+  persistReducer,
+  FLUSH,
+  REHYDRATE,
+  PAUSE,
+  PERSIST,
+  PURGE,
+  REGISTER,
+} from "redux-persist";
+import storage from "redux-persist/lib/storage";
+
+const initialState = {
+  myDiagnosticData: [],
+};
+
+function customReducer(state = initialState, action) {
+  switch (action.type) {
+    case "SET_MY_DIAGNOSTIC_DATA":
+      return {
+        ...state,
+        myDiagnosticData: action.payload,
+      };
+    default:
+      return state;
+  }
+}
+
+// 🔹 META SLICE to track lastPersistedAt
+const META_UPDATE = "meta/UPDATE_TIMESTAMP";
+
+// export an action creator so we can call it from React
+export const updateMetaTimestamp = () => ({ type: META_UPDATE });
+
+const metaInitialState = {
+  lastPersistedAt: Date.now(),
+  isExpired: false,
+};
+
+// ✅ keep 24 hours for testing, switch back later
+const EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+function metaReducer(state = metaInitialState, action) {
+  switch (action.type) {
+    case META_UPDATE:
+      return {
+        ...state,
+        lastPersistedAt: Date.now(),
+        isExpired: false,
+      };
+    // ✅ ADD THIS: allow explicit expiry trigger
+    case "meta/EXPIRE":
+      return {
+        ...state,
+        isExpired: true,
+      };
+    default:
+      return state;
+  }
+}
+
+// Combine ALL your reducers, including kpiApi:
+const appReducer = combineReducers({
+  custom: customReducer,
+  benchmarkData: benchmarkReducer,
+  fileUpload: fileUploadReducer,
+  oneGo: oneGoReducer,
+  tabAccess: tabAccessReducer,
+  [kpiApi.reducerPath]: kpiApi.reducer,
+  meta: metaReducer,
+});
+
+
+
+// 🔹 Root reducer that can wipe / expire state
+const rootReducer = (state, action) => {
+  // wipe everything on logout
+  if (action.type === "auth/logout") {
+    state = undefined;
+  }
+
+  // ✅ important: read from action.payload during REHYDRATE
+  if (action.type === REHYDRATE) {
+    const inboundState = action.payload;
+
+    if (inboundState) {
+      const now = Date.now();
+      const last = inboundState.meta?.lastPersistedAt ?? 0;
+      const age = now - last;
+
+      if (age > EXPIRY_MS) {
+        // return a fresh expired state immediately
+        return appReducer(
+          {
+           custom: initialState,
+            benchmarkData: undefined,
+            fileUpload: undefined,
+            oneGo: undefined,
+            tabAccess: undefined,
+            [kpiApi.reducerPath]: undefined,
+            meta: {
+              lastPersistedAt: last,
+              isExpired: true,
+            },
+          },
+          action
+        );
+      }
+    }
+  }
+
+  return appReducer(state, action);
+};
+
+const persistConfig = {
+  key: "root",
+  version: 1,
+  storage,
+  whitelist: ["tabAccess", "fileUpload", "kpiApi", "meta"],
+};
+
+const persistedReducer = persistReducer(persistConfig, rootReducer);
+
+const store = configureStore({
+  reducer: persistedReducer,
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER],
+        ignoredPaths: ["kpiApi.queries", "kpiApi.mutations"],
+      },
+    }).concat(kpiApi.middleware),
+});
+
+setupListeners(store.dispatch);
+
+export const persistor = persistStore(store);
+
+export const purgePersistedState = async () => {
+  await persistor.purge();
+};
+
+export default store;
 
 --
 
@@ -1750,147 +1476,573 @@ export default MethodOneVirtualAssistant;
 
 --
 
-Request URL
+import React, { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
+import MethodOneVirtualAssistant from "./MethodOneVirtualAssistant";
 
-http://localhost:8000/chat/history/threads
+const ChatWidget = () => {
+  const location = useLocation();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    // Always close the chat if we go to the assessment page
+    if (location.pathname === "/assessment") {
+      setOpen(false);
+    }
+  }, [location.pathname]);
+
+  // Only show the 🤖 button if not on /assessment
+  if (location.pathname === "/assessment") {
+    return (
+      <div style={{ position: "fixed", right: 24, bottom: 24, zIndex: 1300 }}>
+        <button
+          onClick={() => {}} // disables opening on assessment route
+          style={{
+            width: 60,
+            height: 60,
+            borderRadius: "50%",
+            background: "#7e2efc",
+            color: "#fff",
+            fontSize: "2rem",
+            border: "none",
+            cursor: "not-allowed",
+            opacity: 0.7,
+          }}
+          aria-label="Chatbot Disabled on Assessment"
+          disabled
+        >
+          🤖
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: "fixed", right: 24, bottom: 24, zIndex: 1300 }}>
+      {!open && (
+        <button
+          onClick={() => setOpen(true)}
+          style={{
+            width: 60,
+            height: 60,
+            borderRadius: "50%",
+            background: "#7e2efc",
+            color: "#fff",
+            fontSize: "2rem",
+            border: "none",
+            cursor: "pointer",
+            boxShadow: "0 3px 12px rgba(137,27,247,0.17)",
+          }}
+          aria-label="Open Chatbot"
+        >
+          🤖
+        </button>
+      )}
+      {open && (
+        <div
+          className="virtual-assistant-chat-box"
+          style={{
+            width: 400,
+            height: 520,
+            background: "#fff",
+            borderRadius: 18,
+            boxShadow: "0 4px 18px rgba(137,27,247,0.12)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <MethodOneVirtualAssistant
+            isOpen={true}
+            isCompact={true}
+            onClose={() => setOpen(false)}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ChatWidget;
 
 
+--
 
-Response:
-
-
-{
-    "user_id": "narayanan.selvaraj",
-    "threads": [
-        {
-            "thread_id": "27ff70ff-c6da-487a-95c9-64411b25340e",
-            "title": "show me the waterfall chart?",
-            "message_count": 60,
-            "last_updated": "2026-05-15T06:28:14.025252"
-        },
-        {
-            "thread_id": "3a4da52a-ee75-4481-99ce-82eebfbe8bb5",
-            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
-            "message_count": 1,
-            "last_updated": "2026-05-15T06:27:19.545184"
-        },
-        {
-            "thread_id": "631a1503-d00c-441d-8527-48112a07faac",
-            "title": "What has been OTIF performance for e-commerce and...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T11:08:05.535502"
-        },
-        {
-            "thread_id": "15313b2f-533a-4b54-8662-5c6ee9ccb36e",
-            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T11:07:53.624647"
-        },
-        {
-            "thread_id": "6e338fac-5596-440e-b1f2-ff6b67c0bbd3",
-            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T11:07:48.498685"
-        },
-        {
-            "thread_id": "6c6d59ad-7f6b-4d69-be9f-896cf55540d6",
-            "title": "What has been OTIF performance for e-commerce and...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:21:56.373320"
-        },
-        {
-            "thread_id": "353d1612-e172-4a4a-b2c8-bfda54a5e06d",
-            "title": "What has been the Inventory % of Revenue at Plant Level...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:19:35.435516"
-        },
-        {
-            "thread_id": "9293b36c-8443-49d9-8fb8-04a9a22fde2f",
-            "title": "What has been the Inventory % of Revenue at Plant Level...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:18:33.218735"
-        },
-        {
-            "thread_id": "c6733df3-eb6b-4447-a01b-edec680e78ab",
-            "title": "What has been the Inventory % of Revenue at Plant Level...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:17:34.464823"
-        },
-        {
-            "thread_id": "c8be53e9-79ca-45cd-8625-263f1060fbb2",
-            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:16:28.352619"
-        },
-        {
-            "thread_id": "7876757f-aad9-4496-a856-aec792d5311e",
-            "title": "What has been OTIF performance for e-commerce and...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:16:17.464131"
-        },
-        {
-            "thread_id": "f910c04b-a87c-4cec-a04c-1f4666baba74",
-            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:05:48.197888"
-        },
-        {
-            "thread_id": "f9cec032-0dec-41ff-a552-f70531590fa3",
-            "title": "Show the past 3-year forecast accuracy trend for CPG...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:05:31.635029"
-        },
-        {
-            "thread_id": "9de1cb1a-1c15-4fd4-8afe-7ca0645e5e2d",
-            "title": "What has been the Inventory % of Revenue at Plant Level...",
-            "message_count": 1,
-            "last_updated": "2026-05-13T06:04:30.790358"
-        },
-        {
-            "thread_id": "4decc4ab-449d-4666-be7a-e45cfd6791b2",
-            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
-            "message_count": 1,
-            "last_updated": "2026-05-11T08:14:00.160765"
-        },
-        {
-            "thread_id": "a01ddf00-dd09-4543-bfc9-900049fc1a8c",
-            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
-            "message_count": 1,
-            "last_updated": "2026-05-11T08:13:49.347907"
-        },
-        {
-            "thread_id": "5bde9b98-bb5b-4b72-9b4b-d6b00bc495b2",
-            "title": "Show Supply Chain FTEs per $B revenue for Modern Trade...",
-            "message_count": 1,
-            "last_updated": "2026-05-11T08:13:13.317816"
-        },
-        {
-            "thread_id": "86bc1abb-5fe9-4749-aa0a-8d84a72a41b0",
-            "title": "What has been the Inventory % of Revenue at Plant Level...",
-            "message_count": 1,
-            "last_updated": "2026-05-11T08:03:45.356758"
-        },
-        {
-            "thread_id": "70304352-bd4a-452e-ae64-93c4ca6a23e9",
-            "title": "Show the past 3-year forecast accuracy trend for CPG...",
-            "message_count": 1,
-            "last_updated": "2026-05-11T08:02:35.216775"
-        },
-        {
-            "thread_id": "7c04c47d-9e3e-42e6-bc5e-cf0206862b32",
-            "title": "Provide Logistics Cost/FTE and OTIF for the North region...",
-            "message_count": 1,
-            "last_updated": "2026-05-11T07:31:57.059870"
-        }
-    ],
-    "count": 20,
-    "offset": 0,
-    "limit": 20
+.methodone-virtual-assistant-container {
+  position: relative;
+  background: #fff;
+  font-family: Inter, Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
 }
----
-Request URL
-http://localhost:8000/chat
 
-Request payload:
+.methodone-virtual-assistant-container .virtual-assistant-header {
+  display: flex;
+  background: #872bcc;
+  color: #fff;
+  border-radius: 18px 18px 0 0;
+  padding: 15px 24px;
+  font-size: 1.11rem;
+  font-weight: 700;
+  align-items: center;
+  justify-content: space-between;
+}
 
-{"user_message":"Show Supply Chain FTEs per $B revenue for Modern Trade channel over the past 3 years and suggest mid-term efficiency improvements"}
+.methodone-virtual-assistant-container .fullscreen-header {
+  display: flex;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border-radius: 18px 18px 0 0;
+  z-index: 20;
+  background: #872bcc;
+  color: #fff;
+  padding: 15px 24px;
+  font-size: 1.11rem;
+  font-weight: 700;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.methodone-virtual-assistant-container .header-content {
+  display: flex;
+  align-items: center;
+}
+
+.methodone-virtual-assistant-container .header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.methodone-virtual-assistant-container .close-button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.7rem;
+  cursor: pointer;
+}
+
+.methodone-virtual-assistant-container .maximize-button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.18rem;
+  cursor: pointer;
+  margin-right: 7px;
+  margin-left: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.methodone-virtual-assistant-container .collapse-button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.methodone-virtual-assistant-container .main-content-wrapper {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  overflow: auto;
+  border-radius: 12px;
+}
+
+.methodone-virtual-assistant-container .chat-history-sidebar {
+  height: 100%;
+  background: #fff;
+  border-right: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.methodone-virtual-assistant-container .sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.methodone-virtual-assistant-container .sidebar-header span {
+  font-weight: bold;
+  font-size: 18px;
+}
+
+.methodone-virtual-assistant-container .sidebar-close-button {
+  border: none;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.methodone-virtual-assistant-container .sidebar-content {
+  padding: 0 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.methodone-virtual-assistant-container .sidebar-item {
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.methodone-virtual-assistant-container .main-chat-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: auto;
+}
+
+.methodone-virtual-assistant-container .welcome-title {
+  padding: 22px 28px 10px;
+  font-weight: 700;
+  font-size: 1.11rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #460073;
+  background: linear-gradient(180deg, #ad9be833, #c6b8f433);
+}
+
+.methodone-virtual-assistant-container .sample-questions {
+  margin-bottom: 12px;
+  padding: 0 28px;
+  background: linear-gradient(180deg, #c6b8f433, #fff);
+}
+
+.methodone-virtual-assistant-container .sample-questions-title {
+  font-weight: 600;
+  color: #000;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.methodone-virtual-assistant-container .sample-query-button {
+  margin-top: 8px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #a100ff52;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  color: #000;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.methodone-virtual-assistant-container .non-fullscreen-welcome {
+  /* Padding handled inline due to conditional */
+}
+
+.methodone-virtual-assistant-container .welcome-message {
+  font-weight: 700;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #460073;
+}
+
+.methodone-virtual-assistant-container .options-grid {
+  display: grid;
+  margin-bottom: 7px;
+}
+
+.methodone-virtual-assistant-container .option-button {
+  background: #fff;
+  border: 1.7px solid #ebe0fb;
+  border-radius: 9px;
+  font-weight: 600;
+  color: #000;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 7px rgba(193, 126, 255, 0.06);
+}
+
+.methodone-virtual-assistant-container .chat-bubbles-container {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.methodone-virtual-assistant-container .chat-bubble-wrapper {
+  display: flex;
+  align-items: flex-end;
+  margin-bottom: 10px;
+  margin-top: 10px;
+}
+
+.methodone-virtual-assistant-container .chat-bubble-wrapper.user {
+  flex-direction: row-reverse;
+}
+
+.methodone-virtual-assistant-container .chat-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: #7e2efc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.methodone-virtual-assistant-container .chat-bubble {
+  padding: 10px 15px;
+  box-shadow: 0 1px 6px rgba(186, 106, 255, 0.06);
+  font-size: 1.02rem;
+  text-align: left;
+  max-width: 74%;
+  min-width: 80px;
+  word-break: break-word;
+}
+
+.methodone-virtual-assistant-container .loading-indicator {
+  color: #aaa;
+  font-size: 1.01rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.methodone-virtual-assistant-container .loading-icon {
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+}
+
+.methodone-virtual-assistant-container .error-message {
+  color: red;
+  font-size: 1.01rem;
+  text-align: center;
+  margin: 10px 0;
+}
+
+.methodone-virtual-assistant-container .input-bar {
+  border-top: 1.6px solid rgb(236, 238, 253);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-direction: row;
+  border-radius: 12px;
+  margin: 20px 0 0 0;
+  position: relative;
+}
+
+.methodone-virtual-assistant-container .input-wrapper {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.methodone-virtual-assistant-container .chat-history-toggle {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #7e2efc;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  z-index: 2;
+  user-select: none;
+}
+
+.methodone-virtual-assistant-container .chat-history-toggle span {
+  display: flex;
+  align-items: center;
+}
+
+.methodone-virtual-assistant-container .separator {
+  font-size: 1.5rem;
+  margin-left: 3px;
+  margin-right: 3px;
+  line-height: 1;
+  font-weight: 100;
+  color: #7e2efc;
+  display: flex;
+  align-items: center;
+}
+
+.methodone-virtual-assistant-container .chat-input {
+  flex: 1;
+  /* Increased right padding (50px) so the text doesn't type underneath the send button */
+  padding: 12px 50px 12px 15px; 
+  border: 1.5px solid #edeef8;
+  border-radius: 12px; /* Slightly rounder to match modern UI */
+  font-size: 1.01rem;
+  background: #fafafd;
+  margin: 0;
+}
+
+.methodone-virtual-assistant-container .fullscreen-input {
+  padding-left: 156px;
+  border: 1px solid #a100ff52;
+}
+
+.methodone-virtual-assistant-container .send-button {
+  background: #7e2efc;
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 34px;  /* Slightly smaller to fit beautifully inside the input box */
+  height: 34px;
+  cursor: pointer;
+  
+  /* 1. This perfectly centers the paper airplane icon inside the button */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  
+  /* 2. This anchors the button perfectly inside the right side of the input field */
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%); /* Mathematically guarantees perfect vertical centering */
+  margin: 0;
+}
+
+.methodone-virtual-assistant-container .footer-disclaimer {
+  padding: 12px 30px;
+  font-size: 0.91rem;
+  color: #726590;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.methodone-virtual-assistant-container .footer-icons {
+  display: flex;
+}
+
+.methodone-virtual-assistant-container .sidebar-new-chat-wrapper {
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.methodone-virtual-assistant-container .sidebar-new-chat-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: none;
+  background: #f3e6ff;
+  color: #7e2efc;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.methodone-virtual-assistant-container .sidebar-new-chat-button:hover {
+  background: #e8d5ff;
+}
+
+.chat-markdown p {
+  margin: 0 0 4px 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 4px 0 4px 1.2rem;
+  padding-left: 1.2rem;
+}
+
+.chat-markdown ul {
+  list-style-type: disc;
+}
+
+.chat-markdown ol {
+  list-style-type: decimal;
+}
+
+.chat-markdown li {
+  margin-bottom: 4px;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 4px 0 4px 1.2rem;
+  padding-left: 1.2rem;
+}
+
+.chat-markdown li {
+  margin-bottom: 4px;
+}
+
+.chart-wrapper-bubble {
+    background: #ffffff;
+    border-radius: 8px;
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden; /* Prevents X-axis labels from leaking */
+}
+
+/* In MethodOneVirtualAssistant.css */
+.methodone-virtual-assistant-container .chat-bubble.bot {
+    max-width: 90% !important; /* Give it more room */
+    width: 100%;
+}
+
+.chart-wrapper-bubble {
+   margin-top: 12px;
+    width: 100%;
+    /* Remove overflow: hidden if it exists here */
+    overflow-x: auto; 
+    display: block;
+    background: #fff;
+}
+
+/* Markdown tables inside chat bubbles */
+.chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid #e2e8f0;
+  padding: 6px 8px;
+}
+
+.chat-markdown th {
+  background-color: #f5f5f5;
+  font-weight: 600;
+  text-align: left;
+}
+
+.chat-markdown tbody tr:nth-child(even) {
+  background-color: #faf5ff;
+}
