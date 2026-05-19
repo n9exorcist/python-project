@@ -1,6 +1,334 @@
+// src/hooks/useChat.js
+import { useState, useCallback, useEffect } from "react";
+
+const API_URL = `${process.env.REACT_APP_API_URL}/chat`;
+
+const useChat = (user, getAccessToken) => {
+  const [chatHistory, setChatHistory] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // ✅ Track current thread id for this conversation
+  const [threadId, setThreadId] = useState(null);
+
+  // ✅ All conversations grouped by thread_id
+  const [conversationsByThread, setConversationsByThread] = useState({});
+
+  // ✅ Per-user storage key so different users don't clash
+  const storageKey = user?.email ? `conversationsByThread_${user.email}` : null;
+
+  // ✅ Load from localStorage when user changes (or on first mount)
+  useEffect(() => {
+    if (!storageKey) {
+      setConversationsByThread({});
+      setChatHistory([]);
+      setThreadId(null);
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setConversationsByThread(parsed || {});
+        const threads = Object.values(parsed || {});
+        if (threads.length > 0) {
+          // ✅ Restore most recently created/updated thread
+          const last = threads.sort((a, b) =>
+            new Date(a?.createdAt || 0) < new Date(b?.createdAt || 0) ? 1 : -1,
+          )[0];
+          setThreadId(last.threadId);
+          setChatHistory(last.messages || []);
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [storageKey]);
+
+  // ✅ Persist conversations to localStorage whenever they change
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(conversationsByThread));
+    } catch {
+      // ignore storage errors
+    }
+  }, [storageKey, conversationsByThread]);
+
+  const sendMessage = useCallback(
+    async (message) => {
+      if (!message.trim()) return;
+
+      // ✅ Optimistically add user message
+      setChatHistory((prev) => [...prev, { from: "user", message }]);
+      setLoading(true);
+      setError(null);
+
+      try {
+        const token = getAccessToken ? await getAccessToken() : null;
+
+        // ✅ Pass current thread_id, or start a new thread when null
+        const payload = {
+          user_message: message,
+          thread_id: threadId || undefined,
+        };
+
+        const response = await fetch(API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: "include",
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // ✅ Ensure we always know which thread this message belongs to
+        const effectiveThreadId =
+          data.thread_id || threadId || "unknown_thread";
+        if (effectiveThreadId !== threadId) {
+          setThreadId(effectiveThreadId);
+        }
+
+        // ✅ FORMAT BOT RESPONSE AS MARKDOWN
+        const raw = data.assistant_response || "No response received";
+
+        const formattedResponse = raw
+          // turn inline " • Item" bullets into real markdown list items
+          .replace(/\s*•\s*/g, "\n- ")
+          // treat your '---' separators as blank lines / new paragraphs
+          .replace(/---/g, "\n\n")
+          // normalize line endings
+          .replace(/\r\n/g, "\n");
+
+        const botMessage = {
+          from: "bot",
+          message: formattedResponse,
+          thread_id: data.thread_id,
+          user_id: data.user_id,
+          state: data.state,
+          timestamp: data.timestamp,
+        };
+
+        // ✅ Append bot response to flat history for current view
+        setChatHistory((prev) => [...prev, botMessage]);
+
+        // ✅ Update per-thread conversation cache
+        setConversationsByThread((prev) => {
+          const existing = prev[effectiveThreadId];
+
+          // ✅ Optionally hydrate from backend state (if present)
+          const backendMessages =
+            Array.isArray(data.state?.messages) &&
+            data.state.messages.length > 0
+              ? data.state.messages.map((m) => ({
+                  from: m.role === "user" ? "user" : "bot",
+                  // if the backend message is from assistant, also format it
+                  message:
+                    m.role === "assistant"
+                      ? (m.content || "")
+                          .replace(/\s*•\s*/g, "\n- ")
+                          .replace(/---/g, "\n\n")
+                          .replace(/\r\n/g, "\n")
+                      : m.content,
+                  timestamp: m.timestamp,
+                }))
+              : null;
+
+          const newMessages = existing
+            ? [...existing.messages, { from: "user", message }, botMessage]
+            : backendMessages || [{ from: "user", message }, botMessage];
+
+          // ✅ First message timestamp or backend timestamp as createdAt
+          const createdAt =
+            existing?.createdAt ||
+            (data.state?.messages?.[0]?.timestamp ?? data.timestamp);
+
+          // ✅ Use first user message as title (fallback to latest message)
+          const title =
+            existing?.title ||
+            (data.state?.messages || []).find((m) => m.role === "user")
+              ?.content ||
+            message;
+
+          return {
+            ...prev,
+            [effectiveThreadId]: {
+              threadId: effectiveThreadId,
+              userId: data.user_id,
+              messages: newMessages,
+              createdAt,
+              title,
+            },
+          };
+        });
+      } catch (err) {
+        setError(err.message || "Chat error occurred");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [getAccessToken, threadId],
+  );
+
+  const clearChat = useCallback(() => {
+    // ✅ Clear only the visible chat; keep past threads in cache
+    setChatHistory([]);
+    setError(null);
+    setThreadId(null);
+  }, []);
+
+  // ✅ NEW: load messages for a given thread into chatHistory
+  const loadThreadHistory = useCallback(
+    (tId) => {
+      if (!tId) return;
+      const conv = conversationsByThread[tId];
+      if (conv && Array.isArray(conv.messages)) {
+        // ✅ Switch visible chat to this thread's messages
+        setChatHistory(conv.messages);
+      } else {
+        // if no messages found, show empty chat for that thread
+        setChatHistory([]);
+      }
+    },
+    [conversationsByThread],
+  );
+
+  return {
+    chatHistory,
+    loading,
+    error,
+    sendMessage,
+    clearChat,
+    threadId,
+    setThreadId,
+    conversationsByThread,
+    loadThreadHistory, // ✅ expose helper
+  };
+};
+
+export default useChat;
+---
+
+// src/components/ValueGridChart.jsx
+import React from "react";
+import DOMPurify from "dompurify";
+import { ValueTreeData } from "../data/ValueTree";
+import "../../assets/css/ValueGridChart.css";
+
+const ValueBox = ({ title, bullets, summary }) => (
+  <div className="value-box-chart-container">
+    <div className={`value-box${summary ? " value-box-summary" : ""}`}>
+      {title && <div className="value-box-title">{title}</div>}
+      {bullets && (
+        <ul>
+          {bullets.map((item, idx) => (
+            <li key={idx}>{item}</li>
+          ))}
+        </ul>
+      )}
+      {summary && (
+        <ul>
+          {summary.map((item, idx) => {
+            const sanitizedHTML = DOMPurify.sanitize(item); // Sanitize before rendering
+            return (
+              <li
+                key={idx}
+                dangerouslySetInnerHTML={{ __html: sanitizedHTML }}
+              />
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  </div>
+);
+
+export default function ValueGridChart() {
+  const columns = ValueTreeData.children;
+
+  return (
+    <div className="value-grid-root-container">
+      <div className="value-grid-root">
+        <div className="value-header">{ValueTreeData.name}</div>
+
+        {/* SVG and structure remain unchanged */}
+        <svg className="value-grid-arrows" width="900" height="70">
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="8"
+              markerHeight="8"
+              refX="6"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 6 3, 0 6" fill="#CCCCCC" />
+            </marker>
+          </defs>
+          <line
+            x1="450"
+            y1="0"
+            x2="450"
+            y2="100"
+            stroke="#CCCCCC"
+            strokeWidth="2"
+            markerEnd="url(#arrowhead)"
+          />
+          <line
+            x1="450"
+            y1="100"
+            x2="338"
+            y2="100"
+            stroke="#CCCCCC"
+            strokeWidth="2"
+            markerEnd="url(#arrowhead)"
+          />
+          <line
+            x1="450"
+            y1="100"
+            x2="562"
+            y2="100"
+            stroke="#CCCCCC"
+            strokeWidth="2"
+            markerEnd="url(#arrowhead)"
+          />
+        </svg>
+
+        <div className="value-columns">
+          {columns.map((col, i) => (
+            <div className="value-column" key={col.name}>
+              <div className="value-column-title">{col.name}</div>
+              <div className="arrow-down"></div>
+              {col.children.map((node, idx) =>
+                node.bullets ? (
+                  <React.Fragment key={idx}>
+                    <ValueBox title={node.name} bullets={node.bullets} />
+                    <div className="arrow-down" />
+                  </React.Fragment>
+                ) : node.summary ? (
+                  <ValueBox key={idx} summary={node.summary} />
+                ) : null
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+--
+
 /* eslint-disable no-console */
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
-import { REHYDRATE } from "redux-persist";
+import { REHYDRATE } from "redux-persist"; // <-- add this at the top
 
 // --------------------------
 // TOKEN HANDLER (MSAL Integration)
@@ -9,6 +337,7 @@ let globalGetAccessToken = null;
 
 export const setTokenGetter = (getAccessToken) => {
   globalGetAccessToken = getAccessToken;
+
 };
 
 // --------------------------
@@ -20,9 +349,10 @@ const baseQueryWithAuth = async (args, api, extraOptions) => {
   try {
     if (typeof globalGetAccessToken === "function") {
       token = await globalGetAccessToken();
+
     } else {
       console.warn(
-        "⚠️ No token getter function registered. Call setTokenGetter() inside useUser()",
+        "⚠️ No token getter function registered. Call setTokenGetter() inside useUser()"
       );
     }
   } catch (err) {
@@ -47,6 +377,7 @@ const baseQueryWithAuth = async (args, api, extraOptions) => {
     try {
       const refreshedToken = await globalGetAccessToken();
       if (refreshedToken) {
+
         const retryBaseQuery = fetchBaseQuery({
           baseUrl: process.env.REACT_APP_API_URL,
           credentials: "include",
@@ -82,7 +413,6 @@ export const kpiApi = createApi({
     "KPIData",
     "KPIBenchmarking",
     "MaturityData",
-    "MaturityAssessmentData",
     "PeerFinancial",
     "Recommendations",
     "BusinessCase",
@@ -96,8 +426,6 @@ export const kpiApi = createApi({
     "Waterfall",
     "FinancialAnalysis",
     "ExecutiveSummary",
-    "KpiDropdown",
-    "ChatHistory",
   ],
   endpoints: (build) => ({
     uploadFile: build.mutation({
@@ -113,12 +441,17 @@ export const kpiApi = createApi({
         { type: "HeatmapData" },
         { type: "Waterfall" },
         { type: "TrendlineData" },
+        // { type: "FinancialAnalysis" },
         { type: "BusinessCase" },
         { type: "Recommendations" },
         { type: "ExecutiveSummary" },
       ],
+
+
     }),
 
+
+    // 🔹 SINGLE KPI-CALCULATION ENDPOINT (base + heatmap_json)
     getKpiCalculation: build.query({
       query: ({ month, channel, productH1, brandH2 } = {}) => {
         const q = new URLSearchParams();
@@ -138,6 +471,7 @@ export const kpiApi = createApi({
             q.append("brand_h2", val);
         });
         const suffix = q.toString() ? `?${q.toString()}` : "";
+
         return `/kpi-calculation${suffix}`;
       },
       providesTags: ["KPIData", "HeatmapData"],
@@ -154,6 +488,7 @@ export const kpiApi = createApi({
       },
     }),
 
+    // 🔹 KPI Waterfall Data endpoint using /kpi/waterfall/data
     getKpiWaterfallData: build.query({
       query: ({ month, channel, productH1, brandH2 }) => {
         const q = new URLSearchParams();
@@ -182,9 +517,11 @@ export const kpiApi = createApi({
       },
     }),
 
+    // 🔹 KPI Trendline Data endpoint using /kpi/trandline/data
     getKpiTrendlineData: build.query({
       query: ({ month, channel, productH1, brandH2 }) => {
         const q = new URLSearchParams();
+
         (Array.isArray(month) ? month : [month]).forEach((val) => {
           if (val && val !== "Overall" && val !== "All") q.append("month", val);
         });
@@ -200,7 +537,10 @@ export const kpiApi = createApi({
           if (val && val !== "Overall" && val !== "All")
             q.append("brand_h2", val);
         });
+
         const suffix = q.toString() ? `?${q.toString()}` : "";
+
+        // NOTE: backend path spelling is /kpi/trandline/data
         return `/kpi/trandline/data${suffix}`;
       },
       providesTags: ["TrendlineData"],
@@ -212,6 +552,7 @@ export const kpiApi = createApi({
           ? resp.monthly_trends
           : [];
         const metadata = resp?.metadata || null;
+
         return {
           weekly,
           monthly,
@@ -224,6 +565,7 @@ export const kpiApi = createApi({
       },
     }),
 
+    // KPI Dropdown endpoints
     getKpiMonths: build.query({
       query: () => "/kpi/dropdown/month",
       providesTags: ["Months"],
@@ -232,6 +574,7 @@ export const kpiApi = createApi({
     }),
 
     getKpiChannels: build.query({
+      // accept month array, pass as query
       query: ({ month } = {}) => {
         const q = new URLSearchParams();
         (Array.isArray(month) ? month : [month]).forEach((m) => {
@@ -246,6 +589,7 @@ export const kpiApi = createApi({
     }),
 
     getKpiProductH1s: build.query({
+      // accept month + channel
       query: ({ month, channel } = {}) => {
         const q = new URLSearchParams();
         (Array.isArray(month) ? month : [month]).forEach((m) => {
@@ -263,6 +607,7 @@ export const kpiApi = createApi({
     }),
 
     getKpiBrandH2s: build.query({
+      // accept month + channel + product_h1
       query: ({ month, channel, productH1 } = {}) => {
         const q = new URLSearchParams();
         (Array.isArray(month) ? month : [month]).forEach((m) => {
@@ -282,22 +627,16 @@ export const kpiApi = createApi({
         Array.isArray(resp?.options) ? resp.options : [],
     }),
 
+    // SCREEN 1: KPI BENCHMARKING
     getKPIBenchmarkingOne: build.query({
       query: () => "/screen1-benchmarking",
       providesTags: ["KPIBenchmarking"],
-      transformResponse: (response) => response,
-    }),
-
-    getKpiDropdown: build.query({
-      query: () => "/screen2-kpi-dropdown",
-      providesTags: ["KpiDropdown"],
-      transformResponse: (response) => response,
-      transformErrorResponse: (response) => {
-        console.error("❌ KPI Dropdown API Error:", response);
+      transformResponse: (response) => {
         return response;
       },
     }),
 
+    // SCREEN 2: KPI BENCHMARKING (POST)
     getKPIBenchmarkingTwo: build.query({
       query: (payload) => ({
         url: "/screen2-benchmarking",
@@ -306,6 +645,9 @@ export const kpiApi = createApi({
       }),
       providesTags: ["KPIBenchmarking"],
       transformResponse: (raw) => {
+
+
+        // ✅ handle null / empty responses gracefully
         if (!raw || typeof raw !== "object") {
           return {
             "KPI Payload": [],
@@ -327,7 +669,9 @@ export const kpiApi = createApi({
           {};
 
         const overallInsight =
-          raw["Overall Insight"] || raw.screen2_data?.["Overall Insight"] || "";
+          raw["Overall Insight"] ||
+          raw.screen2_data?.["Overall Insight"] ||
+          "";
 
         return {
           "KPI Payload": Array.isArray(kpiPayload) ? kpiPayload : [],
@@ -337,10 +681,15 @@ export const kpiApi = createApi({
       },
     }),
 
+
+    // MATURITY ASSESSMENT DATA
     getMaturityAssessment: build.query({
       query: () => "/maturity-assessment",
       providesTags: ["MaturityAssessmentData"],
       transformResponse: (rawResponse) => {
+
+
+        // If backend sent null / non‑object, just return an empty shape instead of throwing
         if (!rawResponse || typeof rawResponse !== "object") {
           return {
             l1CapabilityTracking: null,
@@ -359,6 +708,7 @@ export const kpiApi = createApi({
       },
     }),
 
+
     getFinancialAnalysis: build.query({
       query: () => "/financial-analyze",
       providesTags: [{ type: "FinancialAnalysis", id: "SINGLE" }],
@@ -369,6 +719,10 @@ export const kpiApi = createApi({
         insights: raw?.insights ?? [],
       }),
     }),
+
+
+
+
 
     getRecommendations: build.query({
       query: () => "/recomendation",
@@ -391,9 +745,9 @@ export const kpiApi = createApi({
                 const recs = Array.isArray(content[term])
                   ? content[term]
                   : content[term]
-                      .split(/\n|,/)
-                      .map((s) => s.trim())
-                      .filter(Boolean);
+                    .split(/\n|,/)
+                    .map((s) => s.trim())
+                    .filter(Boolean);
                 recs.forEach((text) => {
                   recommendations.push({
                     category: content["Assessment"],
@@ -419,7 +773,9 @@ export const kpiApi = createApi({
     getBusinessCase: build.query({
       query: () => "/business-case",
       providesTags: ["BusinessCase"],
-      transformResponse: (result) => result,
+      transformResponse: (result) => {
+        return result;
+      },
     }),
 
     getExecutiveSummary: build.query({
@@ -428,6 +784,7 @@ export const kpiApi = createApi({
       transformResponse: (json) => json ?? null,
     }),
 
+    // 🔹 NEW: Download PPT mutation
     downloadPpt: build.mutation({
       query: () => ({
         url: "/generate-ppt/download",
@@ -457,96 +814,32 @@ export const kpiApi = createApi({
       }),
     }),
 
-    uploadPpt: build.mutation({
-      query: (formData) => ({
-        url: "/upload-ppt/",
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      }),
-      invalidatesTags: [
-        "ExecutiveSummary",
-        "Recommendations",
-        "BusinessCase",
-        "FinancialAnalysis",
-      ],
-    }),
 
-    // Replace getChatThreads endpoint
-    getChatThreads: build.query({
-      query: () => "/chat/history/threads",
-      providesTags: ["ChatHistory"],
-      transformResponse: (resp) => {
-        const threadsMap = {};
-        (resp?.threads || []).forEach((t) => {
-          threadsMap[t.thread_id] = {
-            threadId: t.thread_id,
-            // ✅ Backend thread list response — try every possible title field
-            title:
-              t.title ||
-              t.first_message ||
-              t.preview ||
-              t.summary ||
-              t.name ||
-              null, // null = needs to be loaded
-            createdAt: t.created_at,
-            lastMessageAt: t.last_message_at,
-            messages: [],
-          };
-        });
-        return threadsMap;
-      },
-    }),
+    // In kpiApi.js - UPDATE the uploadPpt endpoint:
+uploadPpt: build.mutation({
+  query: (formData) => ({
+    url: "/upload-ppt/",
+    method: "POST",
+    body: formData,
+    credentials: "include",
+  }),
+  invalidatesTags: [
+    "ExecutiveSummary",
+    "Recommendations", 
+    "BusinessCase",
+    "FinancialAnalysis",
+  ],
+}),
 
-    // ── GET messages of a specific thread ───────────────────────
-    getChatThreadMessages: build.query({
-      query: (threadId) => `/chat/history/${threadId}`,
-      providesTags: (result, error, threadId) => [
-        { type: "ChatHistory", id: threadId },
-      ],
-      transformResponse: (resp) => resp?.messages || [],
-      transformErrorResponse: (response) => {
-        console.error("❌ Chat Thread Messages API Error:", response);
-        return response;
-      },
-    }),
 
-    // ── DELETE a specific thread ─────────────────────────────────
-    deleteChatThread: build.mutation({
-      query: (threadId) => ({
-        url: `/chat/history/${threadId}`,
-        method: "DELETE",
-      }),
-      invalidatesTags: ["ChatHistory"],
-      transformErrorResponse: (response) => {
-        console.error("❌ Delete Chat Thread API Error:", response);
-        return response;
-      },
-    }),
-
-    // ── POST send a chat message ─────────────────────────────────
-    sendChatMessage: build.mutation({
-      query: ({ message, threadId }) => ({
-        url: "/chat",
-        method: "POST",
-        body: {
-          user_message: message,
-          thread_id: threadId || undefined,
-        },
-      }),
-      invalidatesTags: ["ChatHistory"],
-      transformErrorResponse: (response) => {
-        console.error("❌ Send Chat Message API Error:", response);
-        return response;
-      },
-    }),
   }),
   extractRehydrationInfo(action, { reducerPath }) {
     if (action.type === REHYDRATE) {
-      return action.payload?.[reducerPath] ?? undefined;
+      return (action).payload?.[reducerPath] ?? undefined;
     }
     return undefined;
   },
+
 });
 
 // --------------------------
@@ -570,167 +863,158 @@ export const {
   useGetExecutiveSummaryQuery,
   useDownloadPptMutation,
   useUploadPptMutation,
-  useGetKpiDropdownQuery,
-  useGetChatThreadsQuery,
-  useGetChatThreadMessagesQuery,
-  useDeleteChatThreadMutation,
-  useSendChatMessageMutation,
 } = kpiApi;
+--
+import React, { useState } from "react";
+import "../../assets/css/recommendations.css";
 
+// Helper: highlight "Hypothesis" & "Recommendations" in plain text content
+function highlightSubheaders(content) {
+  if (typeof content !== "string") return content;
+  return content.replace(
+    /(Hypothesis|Recommendations)/g,
+    '<span class="rec-subheader">$1</span>'
+  );
+}
+
+function RecommendationsAccordion({ sections = [] }) {
+  const [openSections, setOpenSections] = useState(new Set());
+
+  // Toggle one section
+  const toggleSection = (idx) => {
+    const newOpenSections = new Set(openSections);
+    newOpenSections.has(idx)
+      ? newOpenSections.delete(idx)
+      : newOpenSections.add(idx);
+    setOpenSections(newOpenSections);
+  };
+
+  // Expand/Collapse all
+  const expandAll = () =>
+    setOpenSections(new Set(sections.map((_, idx) => idx)));
+  const collapseAll = () => setOpenSections(new Set());
+
+  if (sections.length === 0) {
+    return null; // Or <div>No sections available.</div>
+  }
+
+  return (
+    <div className="rec-accordion">
+      <div className="rec-controls" style={{ marginBottom: "10px" }}>
+        <button
+          className="rec-expand-btn"
+          onClick={expandAll}
+          style={{ marginRight: "10px" }}
+        >
+          Expand All
+        </button>
+        <button className="rec-expand-btn" onClick={collapseAll}>
+          Collapse All
+        </button>
+      </div>
+      {sections.map(({ title, content }, idx) => {
+        const isOpen = openSections.has(idx);
+        return (
+          <div className="rec-accordion-section" key={title || idx}>
+            <button
+              className={`rec-accordion-header${isOpen ? " open" : ""}`}
+              onClick={() => toggleSection(idx)}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                width: "100%",
+                background: "none",
+                border: "none",
+                padding: "16px",
+                fontSize: "1.1rem",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ fontWeight: "bold" }}>
+                {title || "Untitled Section"}
+              </span>
+              <span
+                className="rec-accordion-toggle"
+                aria-label={isOpen ? "Collapse" : "Expand"}
+                style={{
+                  marginLeft: "auto",
+                  color: isOpen ? "#7500c0" : "#000",
+                  fontWeight: "bold",
+                }}
+              >
+                {isOpen ? "–" : "+"}
+              </span>
+            </button>
+            {isOpen && (
+              <div
+                className="rec-accordion-content"
+                dangerouslySetInnerHTML={
+                  typeof content === "string"
+                    ? { __html: highlightSubheaders(content) }
+                    : undefined
+                }
+              >
+                {typeof content !== "string" ? content : null}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default RecommendationsAccordion;
 --
 
-// store.js
-import { combineReducers, configureStore } from "@reduxjs/toolkit";
-import { setupListeners } from "@reduxjs/toolkit/query";
-import benchmarkReducer from "./slices/benchmarkSlice";
-import oneGoReducer from "./slices/oneGoSlice";
-import fileUploadReducer from "./slices/fileUploadSlice";
-import tabAccessReducer from "./slices/tabAccessSlice";
-import { kpiApi } from "./services/kpiApi";
-import {
-  persistStore,
-  persistReducer,
-  FLUSH,
-  REHYDRATE,
-  PAUSE,
-  PERSIST,
-  PURGE,
-  REGISTER,
-} from "redux-persist";
-import storage from "redux-persist/lib/storage";
+import React from "react";
 
-const initialState = {
-  myDiagnosticData: [],
+const tabMap = {
+  Demo: "/assistant/demo",
+  Industries: "/assistant/industries",
+  Stage0: "/assistant/stage-0",
+  GuideBook: "/assistant/guidebook",
 };
 
-function customReducer(state = initialState, action) {
-  switch (action.type) {
-    case "SET_MY_DIAGNOSTIC_DATA":
-      return {
-        ...state,
-        myDiagnosticData: action.payload,
-      };
-    default:
-      return state;
-  }
-}
+// Utility to validate whether the URL is safe (starts with / or https)
+const isSafeUrl = (url) => /^\/|^https?:\/\//.test(url);
 
-// 🔹 META SLICE to track lastPersistedAt
-const META_UPDATE = "meta/UPDATE_TIMESTAMP";
-
-// export an action creator so we can call it from React
-export const updateMetaTimestamp = () => ({ type: META_UPDATE });
-
-const metaInitialState = {
-  lastPersistedAt: Date.now(),
-  isExpired: false,
-};
-
-// ✅ keep 24 hours for testing, switch back later
-const EXPIRY_MS = 24 * 60 * 60 * 1000;
-
-function metaReducer(state = metaInitialState, action) {
-  switch (action.type) {
-    case META_UPDATE:
-      return {
-        ...state,
-        lastPersistedAt: Date.now(),
-        isExpired: false,
-      };
-    // ✅ ADD THIS: allow explicit expiry trigger
-    case "meta/EXPIRE":
-      return {
-        ...state,
-        isExpired: true,
-      };
-    default:
-      return state;
-  }
-}
-
-// Combine ALL your reducers, including kpiApi:
-const appReducer = combineReducers({
-  custom: customReducer,
-  benchmarkData: benchmarkReducer,
-  fileUpload: fileUploadReducer,
-  oneGo: oneGoReducer,
-  tabAccess: tabAccessReducer,
-  [kpiApi.reducerPath]: kpiApi.reducer,
-  meta: metaReducer,
-});
-
-
-
-// 🔹 Root reducer that can wipe / expire state
-const rootReducer = (state, action) => {
-  // wipe everything on logout
-  if (action.type === "auth/logout") {
-    state = undefined;
-  }
-
-  // ✅ important: read from action.payload during REHYDRATE
-  if (action.type === REHYDRATE) {
-    const inboundState = action.payload;
-
-    if (inboundState) {
-      const now = Date.now();
-      const last = inboundState.meta?.lastPersistedAt ?? 0;
-      const age = now - last;
-
-      if (age > EXPIRY_MS) {
-        // return a fresh expired state immediately
-        return appReducer(
-          {
-           custom: initialState,
-            benchmarkData: undefined,
-            fileUpload: undefined,
-            oneGo: undefined,
-            tabAccess: undefined,
-            [kpiApi.reducerPath]: undefined,
-            meta: {
-              lastPersistedAt: last,
-              isExpired: true,
-            },
-          },
-          action
-        );
-      }
+const AssistantLinkButton = ({ label, tab }) => {
+  // Defensive check for valid tab key and safe URL
+  const url = tabMap[tab];
+  const handleClick = () => {
+    if (url && isSafeUrl(url)) {
+      window.open(url, "_blank", "noopener,noreferrer"); // safer open
+    } else {
+      // eslint-disable-next-line no-console
+      console.warn("Attempted to open unsafe or invalid URL:", url);
     }
-  }
+  };
 
-  return appReducer(state, action);
+  return (
+    <button
+      className="assistant-link-btn"
+      onClick={handleClick}
+      style={{
+        margin: "8px",
+        minWidth: "150px",
+        padding: "16px 24px",
+        background: "#f4f4fc",
+        border: "none",
+        borderRadius: "12px",
+        fontWeight: "bold",
+        color: "#4a287c",
+        cursor: "pointer",
+        boxShadow: "0 2px 8px rgba(87,34,202,0.09)",
+      }}
+    >
+      {label}
+    </button>
+  );
 };
 
-const persistConfig = {
-  key: "root",
-  version: 1,
-  storage,
-  whitelist: ["tabAccess", "fileUpload", "kpiApi", "meta"],
-};
-
-const persistedReducer = persistReducer(persistConfig, rootReducer);
-
-const store = configureStore({
-  reducer: persistedReducer,
-  middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware({
-      serializableCheck: {
-        ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER],
-        ignoredPaths: ["kpiApi.queries", "kpiApi.mutations"],
-      },
-    }).concat(kpiApi.middleware),
-});
-
-setupListeners(store.dispatch);
-
-export const persistor = persistStore(store);
-
-export const purgePersistedState = async () => {
-  await persistor.purge();
-};
-
-export default store;
-
+export default AssistantLinkButton;
 --
 
 // src/components/chatbot/MethodOneVirtualAssistant.jsx
@@ -741,7 +1025,7 @@ import { useUser } from "../usecontext/UserContext";
 import { useMsal } from "@azure/msal-react";
 import useChat from "../../hooks/useChat";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm"; // ✅ NEW: GFM plugin for tables
+import remarkGfm from "remark-gfm";
 import ChartRenderer from "./ChartRenderer";
 import "../../assets/css/MethodOneVirtualAssistant.css";
 import { getBlobUrl } from "../../utils/blobUrls";
@@ -771,34 +1055,37 @@ const MethodOneVirtualAssistant = ({
   // ✅ Always call hook
   const chatHook = useChat(user, getAccessToken);
   const {
-  chatHistory,
-  loading,
-  threadsLoading,
-  error,
-  sendMessage,
-  clearChat,
-  threadId,
-  conversationsByThread,
-  loadThreadHistory,
-  removeThread,
-} = chatHook || {
-  chatHistory: [],
-  loading: false,
-  threadsLoading: false,
-  error: null,
-  sendMessage: async () => {},
-  clearChat: () => {},
-  threadId: null,
-  conversationsByThread: {},
-  loadThreadHistory: () => {},
-  removeThread: async () => {},
-};
+    chatHistory,
+    loading,
+    threadsLoading,
+    error,
+    sendMessage,
+    clearChat,
+    threadId,
+    sortedThreads,      // ← FIX: use pre-sorted array from hook
+    loadThreadHistory,
+    removeThread,
+    removeAllThreads,   // ← NEW: wired to DELETE /chat/history
+  } = chatHook || {
+    chatHistory: [],
+    loading: false,
+    threadsLoading: false,
+    error: null,
+    sendMessage: async () => {},
+    clearChat: () => {},
+    threadId: null,
+    sortedThreads: [],
+    loadThreadHistory: () => {},
+    removeThread: async () => {},
+    removeAllThreads: async () => {},
+  };
 
   const [input, setInput] = useState(isFullScreen ? "" : initialMsg);
   const [showChatSidebar, setShowChatSidebar] = useState(true);
   const [isCollapsed] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -922,11 +1209,11 @@ const MethodOneVirtualAssistant = ({
 
     if (pathname === "/assessment") {
       return [
-        "Show the past 3-year forecast accuracy trend for CPG Industry and suggest short-term actions to improve it",
-        "What has been the Inventory % of Revenue at Plant Level over the last 3 years, and how can we optimize it in the next 6 months?",
-        "Provide Logistics Cost/FTE and OTIF for the North region over the past 3 years and recommend ways to improve efficiency",
         "Show Supply Chain FTEs per $B revenue for Modern Trade channel over the past 3 years and suggest mid-term efficiency improvements",
-        "What has been OTIF performance for e-commerce and traditional trade in the last 3 years, and what short-term steps can enhance service?",
+        "Show me the trendline chart?",
+        "I want to see the percentage contribution of OTIF miss by brand?",
+        "Give me three years trs growth of top 3 company",
+        "feedback: One of the Leading practice for forecasting for consumer goods is to forecast at a monthly level",
       ];
     }
 
@@ -977,6 +1264,16 @@ const MethodOneVirtualAssistant = ({
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = 0;
     }
+  };
+
+  // Handle clear all with inline confirmation
+  const handleClearAll = async () => {
+    if (!showClearConfirm) {
+      setShowClearConfirm(true);
+      return;
+    }
+    setShowClearConfirm(false);
+    await removeAllThreads();
   };
 
   // Auto-send initial message for tab screens
@@ -1115,6 +1412,7 @@ const MethodOneVirtualAssistant = ({
               </button>
             </div>
 
+            {/* NEW CHAT + CLEAR ALL BUTTONS */}
             <div className="sidebar-new-chat-wrapper">
               <button
                 type="button"
@@ -1124,81 +1422,128 @@ const MethodOneVirtualAssistant = ({
                 <span className="material-symbols-outlined fs-4">add</span>
                 <span style={{ marginLeft: 6 }}>New Chat</span>
               </button>
+
+              {/* FIX: Clear all button — wired to DELETE /chat/history */}
+              {sortedThreads.length > 0 && (
+                <button
+                  type="button"
+                  className="sidebar-clear-all-button"
+                  onClick={handleClearAll}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "100%",
+                    marginTop: 6,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: showClearConfirm ? "#ffe0e0" : "#f5f5f5",
+                    color: showClearConfirm ? "#c0392b" : "#888",
+                    fontSize: "0.85rem",
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    transition: "background 0.2s",
+                  }}
+                >
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 16, marginRight: 5 }}
+                  >
+                    delete_sweep
+                  </span>
+                  {showClearConfirm ? "Confirm clear all?" : "Clear all chats"}
+                </button>
+              )}
             </div>
 
-            {/* CHAT SIDEBAR - replace the existing sidebar-content div */}
-{/* CHAT SIDEBAR - replace the existing sidebar-content div */}
-<div className="sidebar-content">
-  {threadsLoading ? (
-    <div style={{ padding: "16px", color: "#888", textAlign: "center" }}>
-      Loading conversations...
-    </div>
-  ) : Object.values(conversationsByThread || {}).length === 0 ? (
-    <div style={{ padding: "16px", color: "#aaa", textAlign: "center" }}>
-      No conversations yet
-    </div>
-  ) : (
-    Object.values(conversationsByThread || {})
-      .sort((a, b) =>
-        new Date(a?.lastMessageAt || a?.createdAt || 0) 
-          ? 1
-          : -1
-      )
-      .map((conv) => {
-  // ✅ Use backend title directly — no need to load messages first
-  // Falls back to shortened ID only if backend didn't send a title
-  const displayTitle =
-    conv.title ||
-    conv.messages?.find((m) => m.from === "user")?.message ||
-    `Chat ${conv.threadId?.substring(0, 8)}...`;
+            {/* CHAT HISTORY LIST */}
+            {/* FIX: uses sortedThreads (pre-sorted DESC by lastMessageAt) */}
+            <div className="sidebar-content">
+              {threadsLoading ? (
+                <div
+                  style={{
+                    padding: "16px",
+                    color: "#888",
+                    textAlign: "center",
+                  }}
+                >
+                  Loading conversations...
+                </div>
+              ) : sortedThreads.length === 0 ? (
+                <div
+                  style={{
+                    padding: "16px",
+                    color: "#aaa",
+                    textAlign: "center",
+                  }}
+                >
+                  No conversations yet
+                </div>
+              ) : (
+                sortedThreads.map((conv) => {
+                  // Backend title is used directly — no message prefetch needed
+                  const displayTitle =
+                    conv.title ||
+                    conv.messages?.find((m) => m.from === "user")?.message ||
+                    `Chat ${conv.threadId?.substring(0, 8)}...`;
 
-  const truncated =
-    displayTitle.length > 40
-      ? `${displayTitle.substring(0, 40)}...`
-      : displayTitle;
+                  const truncated =
+                    displayTitle.length > 40
+                      ? `${displayTitle.substring(0, 40)}...`
+                      : displayTitle;
 
-  return (
-    <div
-      key={conv.threadId}
-      className={`sidebar-item${conv.threadId === threadId ? " active" : ""}`}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        cursor: "pointer",
-      }}
-      onClick={() => loadThreadHistory(conv.threadId)}
-    >
-      <div
-        className="sidebar-item-title"
-        style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}
-      >
-        {truncated}
-      </div>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          removeThread(conv.threadId);
-        }}
-        style={{
-          background: "transparent",
-          border: "none",
-          cursor: "pointer",
-          color: "#aaa",
-          padding: "2px 4px",
-          flexShrink: 0,
-        }}
-        title="Delete conversation"
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-          delete
-        </span>
-      </button>
-    </div>
-  );
-})
-  )}
-</div>
+                  return (
+                    <div
+                      key={conv.threadId}
+                      className={`sidebar-item${
+                        conv.threadId === threadId ? " active" : ""
+                      }`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => loadThreadHistory(conv.threadId)}
+                    >
+                      <div
+                        className="sidebar-item-title"
+                        style={{
+                          flex: 1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {truncated}
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeThread(conv.threadId);
+                        }}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "#aaa",
+                          padding: "2px 4px",
+                          flexShrink: 0,
+                        }}
+                        title="Delete conversation"
+                      >
+                        <span
+                          className="material-symbols-outlined"
+                          style={{ fontSize: 16 }}
+                        >
+                          delete
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         )}
 
@@ -1473,576 +1818,1303 @@ const MethodOneVirtualAssistant = ({
 };
 
 export default MethodOneVirtualAssistant;
-
 --
 
-import React, { useState, useEffect } from "react";
-import { useLocation } from "react-router-dom";
-import MethodOneVirtualAssistant from "./MethodOneVirtualAssistant";
+import React, { useRef, useEffect } from "react";
+import * as d3 from "d3";
 
-const ChatWidget = () => {
-  const location = useLocation();
-  const [open, setOpen] = useState(false);
+const MAIN_COLOR = "#2A2D84";
+const PEER_COLOR = "#D3D3D3";
+
+
+// Utility to escape HTML
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeNumber(val) {
+  if (val === undefined || val === null) return 0;
+  if (typeof val === "string") {
+    const parsed = parseFloat(val.replace("%", ""));
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  const n = Number(val);
+  return isNaN(n) ? 0 : n;
+}
+
+export default function GroupedBarChart({
+   data,
+  width = 880,
+  height = 420,
+  highlightedCompany,
+  metricField = "Revenue_USD_mn",
+  inventoryField = undefined,
+  percentField = "Inventory_Revenue",
+  chartTitleLeft = "Revenue",
+  chartTitleRight = "Inventory",
+  percentTitle = "Revenue/Inventory (%)",
+}) {
+  const svgRef = useRef();
+  const tooltipRef = useRef();
 
   useEffect(() => {
-    // Always close the chat if we go to the assessment page
-    if (location.pathname === "/assessment") {
-      setOpen(false);
-    }
-  }, [location.pathname]);
+    const tooltip = d3
+      .select(tooltipRef.current)
+      .style("position", "absolute")
+      .style("visibility", "hidden")
+      .style("background", "#fafbfc")
+      .style("border", "1px solid #e0e0e0")
+      .style("padding", "7px 12px")
+      .style("border-radius", "6px")
+      .style("pointer-events", "none")
+      .style("font-size", "13px")
+      .style("z-index", "10");
 
-  // Only show the 🤖 button if not on /assessment
-  if (location.pathname === "/assessment") {
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
+
+    if (
+      !data ||
+      !data.companies ||
+      !Array.isArray(data.companies) ||
+      data.companies.length === 0
+    ) {
+      svg.attr("width", width).attr("height", height);
+      return;
+    }
+
+    const allYearSets = data.companies.map((c) =>
+      Object.keys(c[metricField] || c[inventoryField] || {})
+    );
+    const effectiveYearSets = allYearSets.map((years) =>
+      years.filter((y) => !/^CAGR$/i.test(y))
+    );
+    const allYears = Array.from(new Set(effectiveYearSets.flat())).sort();
+
+    // Only last 3 years
+    const fiscalYearToLabel = (fy) => {
+      const match = typeof fy === "string" ? fy.match(/FY-\d{2}\/(\d{4})/i) : null;
+      return match ? match[1] : fy || "";
+    };
+    let allYearLabels = allYears.map(fiscalYearToLabel);
+    let years = allYearLabels.slice(-3);
+
+    const labelToFiscalYear = {};
+    years.forEach((label, i) => {
+      const pos = allYears.length - years.length + i;
+      if (label !== "" && allYears[pos] !== undefined)
+        labelToFiscalYear[label] = allYears[pos];
+    });
+
+    const company =
+      data.companies.find((c) => c.name === highlightedCompany) ||
+      data.companies[0];
+
+    const clientName = data?.client_name;
+    // const companyName = clientName
+    //   ? (clientName.includes("(")
+    //       ? clientName.split("(")[1].replace(")", "").trim()
+    //       : clientName)
+    //   : company?.name || "Unknown Company";
+
+    const companyName = clientName
+      ? (clientName.includes("(")
+        ? clientName.split("(")[1].replace(")", "").trim()
+        : clientName)
+      : company?.name || "Unknown Company";
+
+    // Build chartData (one entry for each year)
+    const chartData = years.map((label) => {
+      const fiscalYear = labelToFiscalYear[label];
+      let percentRaw = company[percentField]?.[fiscalYear];
+      let metricRaw = company[metricField]?.[fiscalYear];
+      let inventoryRaw =
+        inventoryField && company[inventoryField]
+          ? company[inventoryField][fiscalYear]
+          : undefined;
+
+      let percent = safeNumber(percentRaw);
+      let metric = safeNumber(metricRaw);
+      let Inventory =
+        inventoryField && inventoryRaw !== undefined
+          ? safeNumber(inventoryRaw)
+          : undefined;
+
+      if (
+        (metric === 0 || !isFinite(metric)) &&
+        metricField === "Revenue_USD_mn" &&
+        Inventory !== undefined &&
+        percent > 0
+      ) {
+        metric = Inventory / (percent / 100);
+      } else if (
+        (Inventory === 0 || !isFinite(Inventory)) &&
+        inventoryField === "Revenue_USD_mn" &&
+        metric !== undefined &&
+        percent > 0
+      ) {
+        Inventory = metric / (percent / 100);
+      }
+
+      return {
+        year: label,
+        metric: isFinite(metric) ? metric : 0,
+        Inventory: Inventory !== undefined && isFinite(Inventory) ? Inventory : 0,
+        percent: isFinite(percent) ? percent : 0,
+      };
+    });
+
+     // === Build peer data from backend PeerMedian ===
+    const peerData = years.map((year) => {
+      const fiscalYear = labelToFiscalYear[year];
+      const peerM = safeNumber(
+        data.PeerMedian?.[fiscalYear] ||
+          data.Peer_Median?.[fiscalYear] ||
+          data.data?.PeerMedian?.[fiscalYear] ||
+          data.data?.Peer_Median?.[fiscalYear] ||
+          company.PeerMedian?.[fiscalYear] ||
+          ""
+      );
+      return { year, value: peerM };
+    });
+
+
+
+    // Keep for y-axis scale
+    const peerMedians = peerData.map((d) => d.value);
+
+    // Remove entries with NaN or non-numeric years if any (defensive)
+    const filteredChartData = chartData.filter(
+      (d) =>
+        typeof d.year === "string" &&
+        d.year !== "" &&
+        isFinite(d.metric) &&
+        isFinite(d.percent) &&
+        (inventoryField ? isFinite(d.Inventory) : true)
+    );
+
+    const margin = { top: 60, right: 70, bottom: 100, left: 70 };
+    const innerWidth = width - margin.left - margin.right;
+    const innerHeight = height - margin.top - margin.bottom;
+    const topHeight = innerHeight * 0.4;
+    const bottomHeight = innerHeight * 0.45;
+    const gap = 60;
+
+    const g = svg
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const chartSpacing = 60;
+    const bandTop = d3
+      .scaleBand()
+      .domain(years)
+      .range([
+        0,
+        inventoryField ? innerWidth / 2 - chartSpacing / 2 : innerWidth,
+      ])
+      .padding(0.4);
+    const bandBottom = d3
+      .scaleBand()
+      .domain(years)
+      .range([0, innerWidth])
+      .padding(0.4);
+
+    const yMetric = d3
+      .scaleLinear()
+      .domain([0, d3.max(filteredChartData, (d) => d.metric) * 1.15])
+      .range([topHeight, 0]);
+    const yInventory =
+      inventoryField &&
+        filteredChartData.some(
+          (d) => d.Inventory !== undefined && d.Inventory !== null
+        )
+        ? d3
+          .scaleLinear()
+          .domain([
+            0,
+            d3.max(filteredChartData, (d) => d.Inventory || 0) * 1.15,
+          ])
+          .range([topHeight, 0])
+        : null;
+
+    const maxPercent =
+      d3.max([
+        ...filteredChartData.map((d) => d.percent),
+        ...peerMedians.filter((v) => v !== null),
+      ]) * 1.15 || 100;
+
+    const yPercent = d3
+      .scaleLinear()
+      .domain([0, maxPercent])
+      .range([bottomHeight, 0]);
+
+    // X-axes
+    g.append("g")
+      .attr("transform", `translate(0,${topHeight})`)
+      .call(d3.axisBottom(bandTop).tickSize(0))
+      .selectAll("text")
+      .attr("font-size", "12px")
+      .attr("fill", "#444");
+    if (inventoryField && yInventory) {
+      g.append("g")
+        .attr("transform", `translate(${innerWidth / 2},${topHeight})`)
+        .call(d3.axisBottom(bandTop).tickSize(0))
+        .selectAll("text")
+        .attr("font-size", "12px")
+        .attr("fill", "#444");
+    }
+    g.append("g")
+      .attr("transform", `translate(0,${topHeight + gap + bottomHeight})`)
+      .call(d3.axisBottom(bandBottom).tickSize(0))
+      .selectAll("text")
+      .attr("font-size", "12px")
+      .attr("fill", "#444");
+
+    // Y-axes
+    g.append("g")
+      .call(
+        d3
+          .axisLeft(yMetric)
+          .ticks(6)
+          .tickFormat((d) =>
+            d === 0 ? "" : `${d3.format(",")(Math.round(d))}`
+          )
+      )
+      .selectAll("text")
+      .attr("font-size", "10px");
+    if (inventoryField && yInventory) {
+      g.append("g")
+        .attr("transform", `translate(${innerWidth / 2}, 0)`)
+        .call(
+          d3
+            .axisLeft(yInventory)
+            .ticks(6)
+            .tickFormat((d) =>
+              d === 0 ? "" : `${d3.format(",")(Math.round(d))}`
+            )
+        )
+        .selectAll("text")
+        .attr("font-size", "10px");
+    }
+    g.append("g")
+      .attr("transform", `translate(0, ${topHeight + gap})`)
+      .call(
+        d3
+          .axisLeft(yPercent)
+          .ticks(5)
+          .tickFormat((d) => d + "%")
+      )
+      .selectAll("text")
+      .attr("font-size", "10px");
+
+    // Chart titles
+    g.append("text")
+      .attr(
+        "x",
+        inventoryField ? innerWidth / 4 : innerWidth / 2
+      )
+      .attr("y", -25)
+      .attr("text-anchor", "middle")
+      .attr("font-weight", "bold")
+      .attr("font-size", 15)
+      .text(chartTitleLeft);
+
+    if (inventoryField && yInventory) {
+      g.append("text")
+        .attr("x", (3 * innerWidth) / 4)
+        .attr("y", -25)
+        .attr("text-anchor", "middle")
+        .attr("font-weight", "bold")
+        .attr("font-size", 15)
+        .text(chartTitleRight);
+    }
+
+    g.append("text")
+      .attr("x", innerWidth / 2)
+      .attr("y", topHeight + gap - 18)
+      .attr("text-anchor", "middle")
+      .attr("font-weight", "bold")
+      .attr("font-size", 15)
+      .text(percentTitle);
+
+    // Main metric bars
+    g.selectAll(".metric-bar")
+      .data(filteredChartData)
+      .join("rect")
+      .attr("class", "metric-bar")
+      .attr("x", (d) => bandTop(d.year))
+      .attr("y", (d) => yMetric(d.metric))
+      .attr("width", bandTop.bandwidth())
+      .attr("height", (d) => topHeight - yMetric(d.metric))
+      .attr("fill", MAIN_COLOR)
+      .attr("rx", 4)
+      .on("mouseover", (event, d) => {
+        tooltip
+          .style("visibility", "visible")
+          .html(
+            `<b>Year:</b> ${escapeHtml(d.year)}<br/><b>${escapeHtml(
+              chartTitleLeft
+            )}:</b> $${escapeHtml(d3.format(",")(d.metric))} mn`
+          );
+      })
+      .on("mousemove", (event) => {
+        const svgRect = svgRef.current.getBoundingClientRect();
+        const tip = tooltipRef.current;
+        const tipWidth = tip.offsetWidth || 140;
+        const tipHeight = tip.offsetHeight || 44;
+        let left = event.clientX - svgRect.left + 12;
+        let top = event.clientY - svgRect.top - tipHeight - 14;
+        if (left + tipWidth > svgRect.width)
+          left = svgRect.width - tipWidth - 8;
+        if (left < 0) left = 8;
+        if (top < 0) top = 8;
+        if (top + tipHeight > svgRect.height)
+          top = svgRect.height - tipHeight - 8;
+        tooltip.style("left", left + "px").style("top", top + "px");
+      })
+      .on("mouseout", () => tooltip.style("visibility", "hidden"));
+
+    g.selectAll(".metric-label")
+      .data(filteredChartData)
+      .join("text")
+      .attr("x", (d) => bandTop(d.year) + bandTop.bandwidth() / 2)
+      .attr("y", (d) => yMetric(d.metric) - 7)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "11px")
+      .attr("fill", "#222")
+      .text((d) => d3.format(",")(Math.round(d.metric)));
+
+    if (inventoryField && yInventory) {
+      g.selectAll(".inventory-bar")
+        .data(filteredChartData)
+        .join("rect")
+        .attr("class", "inventory-bar")
+        .attr("x", (d) => bandTop(d.year) + innerWidth / 2)
+        .attr("y", (d) => yInventory(d.Inventory))
+        .attr("width", bandTop.bandwidth())
+        .attr("height", (d) => topHeight - yInventory(d.Inventory))
+        .attr("fill", MAIN_COLOR)
+        .attr("rx", 4)
+        .on("mouseover", (event, d) => {
+          tooltip
+            .style("visibility", "visible")
+            .html(
+              `<b>Year:</b> ${escapeHtml(d.year)}<br/><b>${escapeHtml(
+                chartTitleRight
+              )}:</b> $${escapeHtml(d3.format(",")(d.Inventory))} mn`
+            );
+        })
+        .on("mousemove", (event) => {
+          const svgRect = svgRef.current.getBoundingClientRect();
+          const tip = tooltipRef.current;
+          const tipWidth = tip.offsetWidth || 140;
+          const tipHeight = tip.offsetHeight || 44;
+          let left = event.clientX - svgRect.left + 12;
+          let top = event.clientY - svgRect.top - tipHeight - 14;
+          if (left + tipWidth > svgRect.width)
+            left = svgRect.width - tipWidth - 8;
+          if (left < 0) left = 8;
+          if (top < 0) top = 8;
+          if (top + tipHeight > svgRect.height)
+            top = svgRect.height - tipHeight - 8;
+          tooltip.style("left", left + "px").style("top", top + "px");
+        })
+        .on("mouseout", () => tooltip.style("visibility", "hidden"));
+
+      g.selectAll(".inventory-label")
+        .data(filteredChartData)
+        .join("text")
+        .attr(
+          "x",
+          (d) => bandTop(d.year) + innerWidth / 2 + bandTop.bandwidth() / 2
+        )
+        .attr("y", (d) => yInventory(d.Inventory) - 7)
+        .attr("text-anchor", "middle")
+        .attr("font-size", "11px")
+        .attr("fill", "#222")
+        .text((d) => d3.format(",")(Math.round(d.Inventory)));
+    }
+
+    // Percent bars (Company)
+    g.selectAll(".percent-bar")
+      .data(filteredChartData)
+      .join("rect")
+      .attr("x", (d) => bandBottom(d.year))
+      .attr("y", (d) => topHeight + gap + yPercent(d.percent))
+      .attr("width", bandBottom.bandwidth() / 2)
+      .attr("height", (d) => bottomHeight - yPercent(d.percent))
+      .attr("fill", MAIN_COLOR)
+      .attr("rx", 4)
+      .on("mouseover", (event, d) => {
+        tooltip
+          .style("visibility", "visible")
+          .html(
+            `<b>${escapeHtml(companyName)}</b><br/><b>Year:</b> ${escapeHtml(
+              d.year
+            )}<br/><b>${escapeHtml(
+              percentTitle.replace(" (%)", "")
+            )}:</b> ${escapeHtml(d.percent.toFixed(1))}%`
+          );
+      })
+      .on("mousemove", (event) => {
+        const svgRect = svgRef.current.getBoundingClientRect();
+        const tip = tooltipRef.current;
+        const tipWidth = tip.offsetWidth || 140;
+        const tipHeight = tip.offsetHeight || 44;
+        let left = event.clientX - svgRect.left + 12;
+        let top = event.clientY - svgRect.top - tipHeight - 14;
+        if (left + tipWidth > svgRect.width)
+          left = svgRect.width - tipWidth - 8;
+        if (left < 0) left = 8;
+        if (top < 0) top = 8;
+        if (top + tipHeight > svgRect.height)
+          top = svgRect.height - tipHeight - 8;
+        tooltip.style("left", left + "px").style("top", top + "px");
+      })
+      .on("mouseout", () => tooltip.style("visibility", "hidden"));
+
+    g.selectAll(".percent-label")
+      .data(filteredChartData)
+      .join("text")
+      .attr("x", (d) => bandBottom(d.year) + bandBottom.bandwidth() / 4)
+      .attr("y", (d) => topHeight + gap + yPercent(d.percent) - 5)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "11px")
+      .attr("fill", "#222")
+      .text((d) => `${d.percent.toFixed(1)}%`);
+
+    // === Peer Median bars ===
+    g.selectAll(".peer-percent-bar")
+      .data(peerData.filter((d) => d.value > 0))
+      .join("rect")
+      .attr("class", "peer-percent-bar")
+      .attr("x", (d) => bandBottom(d.year) + bandBottom.bandwidth() / 2)
+      .attr("y", (d) => topHeight + gap + yPercent(d.value))
+      .attr("width", bandBottom.bandwidth() / 2)
+      .attr("height", (d) => bottomHeight - yPercent(d.value))
+      .attr("fill", PEER_COLOR)
+      .attr("rx", 4)
+      .on("mouseover", (event, d) => {
+        tooltip
+          .style("visibility", "visible")
+          .html(
+            `<b>Peer Median</b><br/><b>Year:</b> ${escapeHtml(
+              d.year
+            )}<br/><b>${escapeHtml(
+              percentTitle.replace(" (%)", "")
+            )}:</b> ${d.value.toFixed(2)}%`
+          );
+      })
+      .on("mousemove", (event) => {
+        const svgRect = svgRef.current.getBoundingClientRect();
+        const tip = tooltipRef.current;
+        const tipWidth = tip.offsetWidth || 140;
+        const tipHeight = tip.offsetHeight || 44;
+        let left = event.clientX - svgRect.left + 12;
+        let top = event.clientY - svgRect.top - tipHeight - 14;
+        if (left + tipWidth > svgRect.width) left = svgRect.width - tipWidth - 8;
+        if (left < 0) left = 8;
+        if (top < 0) top = 8;
+        if (top + tipHeight > svgRect.height) top = svgRect.height - tipHeight - 8;
+        tooltip.style("left", left + "px").style("top", top + "px");
+      })
+      .on("mouseout", () => tooltip.style("visibility", "hidden"));
+
+    // === Peer Median labels ===
+    g.selectAll(".peer-percent-label")
+      .data(peerData.filter((d) => d.value > 0))
+      .join("text")
+      .attr("x", (d) => bandBottom(d.year) + (bandBottom.bandwidth() * 3) / 4)
+      .attr("y", (d) => topHeight + gap + yPercent(d.value) - 5)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "11px")
+      .attr("fill", "#222")
+      .text((d) => `${d.value.toFixed(1)}%`);
+
+    // Legend
+    const legendY = topHeight + gap + bottomHeight + 40;
+    g.append("rect")
+      .attr("x", innerWidth / 2 - 120)
+      .attr("y", legendY)
+      .attr("width", 18)
+      .attr("height", 18)
+      .attr("fill", MAIN_COLOR)
+      .attr("rx", 5);
+    g.append("text")
+      .attr("x", innerWidth / 2 - 95)
+      .attr("y", legendY + 13)
+      .attr("font-size", "13px")
+      .text(companyName);
+
+    g.append("rect")
+      .attr("x", innerWidth / 2 + 100)
+      .attr("y", legendY)
+      .attr("width", 18)
+      .attr("height", 18)
+      .attr("fill", PEER_COLOR)
+      .attr("rx", 5);
+    g.append("text")
+      .attr("x", innerWidth / 2 + 120)
+      .attr("y", legendY + 13)
+      .attr("font-size", "13px")
+      .text("Peer Median");
+  }, [
+    data,
+    width,
+    height,
+    highlightedCompany,
+    metricField,
+    inventoryField,
+    percentField,
+    chartTitleLeft,
+    chartTitleRight,
+    percentTitle,
+  ]);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: width,
+        minHeight: height,
+        margin: "0 auto",
+        background: "#fff",
+      }}
+    >
+      <svg ref={svgRef} width={width} height={height}></svg>
+      <div ref={tooltipRef}></div>
+    </div>
+  );
+}
+--
+import React, { useEffect, useMemo, useRef } from "react";
+import * as d3 from "d3";
+import "../../assets/css/RoadmapSwimlane.css";
+
+
+// Utility to split long text for goal and phase labels
+function splitText(text, maxLength = 35) {
+  const words = text.split(/\s+/);
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    if ((current + word).length < maxLength) {
+      current += (current ? " " : "") + word;
+    } else {
+      if (current) lines.push(current);
+      current = word;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+
+
+// Utility to escape HTML entities to prevent XSS
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+
+export default function RoadmapSwimlane({
+  data, // { nodes, lanes, xBands, legend, phases, goal }
+  functionName,
+  kpi,
+  width = 1400,
+  height = 1200,
+}) {
+  const svgRef = useRef(null);
+
+  const legendWidth = 240; // space reserved for legend so nodes don't overlap
+
+  const layout = useMemo(() => {
+    if (!data || !data.nodes || data.nodes.length === 0) {
+      return null;
+    }
+
+    const margin = { top: 110, right: legendWidth, bottom: 110, left: 260 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const laneGap = innerH / (data.lanes.length - 1 || 1);
+    const laneY = (laneIdx) => margin.top + laneIdx * laneGap;
+
+    const phaseIds = data.xBands || [];
+    const xScale = d3
+      .scalePoint()
+      .domain(phaseIds)
+      .range([margin.left, margin.left + innerW - 70]) // 70px safety for legend
+      .padding(0.5);
+
+    const color = d3
+      .scaleOrdinal()
+      .domain(data.legend.map((l) => l.id))
+      .range(data.legend.map((l) => l.color));
+
+    // Group items by lane, then sort by phase order
+    const byLane = d3.group(data.nodes, (d) => d.lane);
+    const phaseOrder = new Map(phaseIds.map((p, i) => [p, i]));
+    for (const [, arr] of byLane) {
+      arr.sort((a, b) =>
+        d3.ascending(phaseOrder.get(a.phase), phaseOrder.get(b.phase))
+      );
+    }
+
+    // Position nodes, with vertical stacking if multiple lines per label
+    const positions = new Map();
+    for (const [laneName, arr] of byLane) {
+      const iLane = data.lanes.indexOf(laneName);
+      const y = laneY(iLane);
+
+      const perPhase = d3.group(arr, (d) => d.phase);
+      for (const [phase, items] of perPhase) {
+        const baseX = xScale(phase);
+        const hSpread = 96; // reduce so nodes don't run over legend!
+        const vSpread = 25;
+        const hStart = -((items.length - 1) * hSpread) / 2;
+        const vStart = y - ((items.length - 1) * vSpread) / 2;
+        items.forEach((d, j) => {
+          positions.set(d.id, {
+            x: baseX + hStart + j * hSpread,
+            y: vStart + j * vSpread,
+            laneIdx: iLane,
+          });
+        });
+      }
+    }
+
+    // Links
+    const links = [];
+    for (const [laneName, arr] of byLane) {
+      for (let i = 1; i < arr.length; i += 1) {
+        links.push({
+          source: arr[i - 1].id,
+          target: arr[i].id,
+          lane: laneName,
+          toGoal: false,
+        });
+      }
+    }
+    const goal = {
+      x: width - legendWidth,
+      y: margin.top + innerH * 0.5,
+      r: 75,
+    };
+    for (const [laneName, arr] of byLane) {
+      const last = arr[arr.length - 1];
+      links.push({
+        source: last.id,
+        target: "__GOAL__",
+        lane: laneName,
+        toGoal: true,
+      });
+    }
+    return {
+      margin,
+      innerW,
+      innerH,
+      laneY,
+      xScale,
+      color,
+      positions,
+      links,
+      goal,
+      byLane,
+    };
+  }, [data, width, height]);
+
+  useEffect(() => {
+    if (!layout) {
+      const svg = d3
+        .select(svgRef.current)
+        .attr("viewBox", `0 0 ${width} ${height}`);
+      svg.selectAll("*").remove();
+      svg
+        .append("text")
+        .attr("x", width / 2)
+        .attr("y", height / 2)
+        .attr("text-anchor", "middle")
+        .attr("class", "no-data-message")
+        .text(
+          `No roadmap data available for ${functionName}${
+            kpi ? ` - ${kpi}` : ""
+          }`
+        );
+      return;
+    }
+
+    const svg = d3
+      .select(svgRef.current)
+      .attr("viewBox", `0 0 ${width} ${height}`);
+    svg.selectAll("*").remove();
+
+    const g = svg.append("g");
+
+    // PHASE BANDS
+    layout.xScale.domain().forEach((phase, i) => {
+      const x = layout.xScale(phase);
+      const prev =
+        i === 0
+          ? layout.xScale(phase) - 120
+          : layout.xScale(layout.xScale.domain()[i - 1]);
+      const next =
+        i === layout.xScale.domain().length - 1
+          ? x + 120
+          : layout.xScale(layout.xScale.domain()[i + 1]);
+      const left = (x + prev) / 2;
+      const right = (x + next) / 2;
+      const bandW = right - left;
+
+      g.append("rect")
+        .attr("x", left - 10)
+        .attr("y", layout.margin.top - 80)
+        .attr("width", bandW + 20)
+        .attr("height", layout.innerH + 140)
+        .attr("rx", 18)
+        .attr("class", `phase-band phase-${phase}`);
+
+      // PHASE LABELS (multi-line)
+      const labelText =
+        data.phases?.find((p) => p.id === phase)?.label ?? phase;
+      const lines = splitText(labelText, 36);
+
+      const phaseText = g
+        .append("text")
+        .attr("x", x)
+        .attr("y", layout.margin.top - 75)
+        .attr("text-anchor", "middle")
+        .attr("class", "phase-label");
+
+      phaseText
+        .selectAll("tspan")
+        .data(lines)
+        .enter()
+        .append("tspan")
+        .attr("x", x)
+        .attr("dy", (_, i) => (i === 0 ? "0" : "1.2em"))
+        .text((d) => d.trim());
+    });
+
+    // LANE LABELS
+    data.lanes.forEach((lane, iLane) => {
+      const y = layout.laneY(iLane);
+      g.append("text")
+        .attr("x", layout.margin.left - 45)
+        .attr("y", y + 4)
+        .attr("text-anchor", "end")
+        .attr("class", "lane-label")
+        .style("font-size", "21px")
+        .text(lane);
+
+      g.append("path")
+        .attr(
+          "d",
+          d3.line()([
+            [layout.margin.left - 20, y],
+            [layout.margin.left + layout.innerW + 50, y],
+          ])
+        )
+        .attr("class", "lane-spine");
+    });
+
+    // CONNECTORS
+    const linkPath = (a, b, isGoal) => {
+      if (isGoal) {
+        const dx = b.x - a.x;
+        const curvature = 0.65;
+        const c1x = a.x + dx * curvature;
+        const c2x = b.x - dx * curvature;
+        return `M${a.x},${a.y} C${c1x},${a.y} ${c2x},${b.y} ${b.x},${b.y}`;
+      } else {
+        return `M${a.x},${a.y} L${b.x},${b.y}`;
+      }
+    };
+
+    const allNodes = new Map([...layout.positions.entries()]);
+    allNodes.set("__GOAL__", { x: layout.goal.x, y: layout.goal.y });
+
+    g.append("g")
+      .attr("class", "links")
+      .selectAll("path")
+      .data(layout.links)
+      .enter()
+      .append("path")
+      .attr("class", "connector")
+      .attr("d", (d) => {
+        const s = allNodes.get(d.source);
+        const t = allNodes.get(d.target);
+        return linkPath(s, t, d.toGoal);
+      });
+
+    // NODES
+    const nodeG = g.append("g").attr("class", "nodes");
+    const nodes = data.nodes.map((d) => ({
+      ...d,
+      ...layout.positions.get(d.id),
+    }));
+
+    // TOOLTIP
+    const tooltip = d3
+      .select(svgRef.current.parentNode)
+      .append("div")
+      .attr("class", "rm-tooltip")
+      .style("opacity", 0);
+
+    const nodeRadius = 14;
+
+    // Node group rendering
+    const item = nodeG
+      .selectAll("g.item")
+      .data(nodes)
+      .enter()
+      .append("g")
+      .attr("class", "item")
+      .attr("transform", (d) => `translate(${d.x},${d.y})`)
+      .on("mouseenter", function (event, d) {
+        const { left, top } = svgRef.current.getBoundingClientRect();
+        tooltip
+          .style("opacity", 1)
+          .html(
+            `<div style='font-weight:bold;font-size:18px;'>${escapeHtml(
+              d.lane
+            )}</div>` +
+              `<div style='font-size:17px;'>${d.label
+                .split("\n")
+                .map((l) => `<div>${escapeHtml(l)}</div>`)
+                .join("")}</div>` +
+              (d.enhanced_hypothesis
+                ? `<div style='margin-top:6px;color:#666;font-size:13px;'>${escapeHtml(
+                    d.enhanced_hypothesis
+                  )}</div>`
+                : "")
+          )
+          .style("left", event.clientX - left + nodeRadius + 15 + "px")
+          .style("top", event.clientY - top - nodeRadius + "px");
+      })
+      .on("mousemove", function (event) {
+        const { left, top } = svgRef.current.getBoundingClientRect();
+        tooltip
+          .style("left", event.clientX - left + nodeRadius + 15 + "px")
+          .style("top", event.clientY - top - nodeRadius + "px");
+      })
+      .on("mouseleave", function () {
+        tooltip.style("opacity", 0);
+      });
+
+    item
+      .append("circle")
+      .attr("r", nodeRadius)
+      .attr("fill", (d) => layout.color(d.tag))
+      .attr("stroke", "#2f2f2f")
+      .attr("stroke-width", 1.4);
+
+    // *Multi-line SVG*
+    item
+      .append("text")
+      .attr("x", 0)
+      .attr("y", nodeRadius + 9)
+      .attr("text-anchor", "middle")
+      .attr("class", "item-label")
+      .style("font-size", "17px")
+      .style("font-weight", "500")
+      .style("fill", "#222")
+      .selectAll("tspan")
+      .data((d) => d.label.split("\n"))
+      .enter()
+      .append("tspan")
+      .attr("x", 0)
+      .attr("dy", (line, i) => (i === 0 ? 0 : "1.25em"))
+      .text((line) => line.trim());
+
+    // GOAL BADGE
+    const goalG = g
+      .append("g")
+      .attr("transform", `translate(${layout.goal.x},${layout.goal.y})`);
+
+    goalG
+      .append("circle")
+      .attr("r", layout.goal.r)
+      .attr("class", "goal-circle");
+
+    const goalText = data.goal?.label || "Best in class planning ecosystem";
+    const goalLines = splitText(goalText, 22);
+    const txt = goalG
+      .append("text")
+      .attr("class", "goal-text")
+      .attr("text-anchor", "middle")
+      .attr("dy", "0.35em")
+      .style("font-size", "21px");
+    txt
+      .selectAll("tspan")
+      .data(goalLines)
+      .enter()
+      .append("tspan")
+      .attr("x", 0)
+      .attr("dy", (_, i) => (i === 0 ? "0" : "1.7em"))
+      .text((d) => d);
+
+    // LEGEND OUTSIDE NODE RENDER AREA
+    const legendG = svg
+      .append("g")
+      .attr("class", "legend")
+      .attr("transform", `translate(${width - legendWidth + 20}, ${70})`);
+    legendG.append("text").attr("class", "legend-title").text("Legend");
+
+    const rows = legendG
+      .selectAll("g.row")
+      .data(data.legend)
+      .enter()
+      .append("g")
+      .attr("class", "row")
+      .attr("transform", (_, i) => `translate(0, ${36 + i * 26})`);
+    rows
+      .append("rect")
+      .attr("width", 16)
+      .attr("height", 16)
+      .attr("rx", 4)
+      .attr("fill", (d) => d.color)
+      .attr("stroke", "#333")
+      .attr("stroke-width", 0.7);
+    rows
+      .append("text")
+      .attr("x", 25)
+      .attr("y", 13)
+      .attr("class", "legend-label")
+      .style("font-size", "15px")
+      .text((d) => d.label);
+  }, [layout, data, width, height, functionName, kpi]);
+
+  return (
+    <div className="roadmap-wrapper" style={{ position: "relative" }}>
+      <svg ref={svgRef} className="roadmap-svg" />
+    </div>
+  );
+}
+--
+
+import React, { useEffect, useRef, useState, useMemo } from "react";
+import * as d3 from "d3";
+
+const getOTIF = (d) =>
+  d["OTIF%"] !== undefined ? d["OTIF%"] :
+  d["OTIF"] !== undefined ? d["OTIF"] : 0;
+
+export default function WeeklyTrendLineChart({
+  data = [],              // weekly_trends
+  monthlyTrends = [],     // monthly_trends
+}) {
+  const svgRef = useRef();
+  const [selectedMonth, setSelectedMonth] = useState("All");
+
+  const hasWeekly = Array.isArray(data) && data.length > 0;
+  const hasMonthly = Array.isArray(monthlyTrends) && monthlyTrends.length > 0;
+  const hasData = hasWeekly || hasMonthly;
+
+  // Latest year from weekly trends (fallback to current year)
+  const latestYear = useMemo(() => {
+    if (!hasWeekly) return new Date().getFullYear();
+    const years = data.map(d => Number(d.year)).filter(y => !isNaN(y));
+    return years.length ? Math.max(...years) : new Date().getFullYear();
+  }, [data, hasWeekly]);
+
+  // Build list of months from monthlyTrends for latestYear
+  const availableMonths = useMemo(() => {
+    if (!hasMonthly) return ["All"];
+    const months = monthlyTrends
+      .filter(m => Number(m.year) === latestYear)
+      .map(m => m.month_name)
+      .filter(Boolean);
+    const unique = Array.from(new Set(months));
+    return ["All", ...unique];
+  }, [monthlyTrends, latestYear, hasMonthly]);
+
+  useEffect(() => {
+    setSelectedMonth("All");
+  }, [data, monthlyTrends]);
+
+  useEffect(() => {
+    if (!hasData) return;
+
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
+
+    const width = 900;
+    const height = 450;
+    const margin = { top: 40, right: 100, bottom: 90, left: 70 };
+    svg.attr("width", width).attr("height", height);
+
+    // 1. Build the series to plot based on selectedMonth
+    let weeklyDataRaw;
+
+    if (selectedMonth === "All") {
+      // Use full weekly_trends for latestYear
+      weeklyDataRaw = (data || []).filter(
+        d => Number(d.year) === latestYear
+      );
+    } else {
+      // Find the monthlyTrends entry and use its weekly_breakdown
+      const monthEntry = (monthlyTrends || []).find(
+        m =>
+          Number(m.year) === latestYear &&
+          m.month_name === selectedMonth
+      );
+
+      weeklyDataRaw = monthEntry?.weekly_breakdown || [];
+    }
+
+    // Normalize weeks to numbers for sorting and labels
+    const weeklyData = weeklyDataRaw
+      .map(d => {
+        let weekNum;
+        if (typeof d.week === "number") {
+          weekNum = d.week;
+        } else if (typeof d.week === "string") {
+          const match = d.week.match(/(\d+)/);
+          weekNum = match ? parseInt(match[1], 10) : NaN;
+        } else {
+          weekNum = NaN;
+        }
+        return {
+          ...d,
+          weekNum,
+          otif: parseFloat(getOTIF(d)) || 0,
+        };
+      })
+      .filter(d => !isNaN(d.weekNum))
+      .sort((a, b) => a.weekNum - b.weekNum);
+
+    if (!weeklyData.length) {
+      svg
+        .append("text")
+        .attr("x", width / 2)
+        .attr("y", margin.top / 2)
+        .attr("text-anchor", "middle")
+        .style("font-size", "18px")
+        .style("font-weight", "600")
+        .text(
+          `No weekly OTIF data available for ${latestYear}${
+            selectedMonth !== "All" ? ` — ${selectedMonth}` : ""
+          }`
+        );
+      return;
+    }
+
+    // ------------------------ X SCALE WITH EXTRA GAP ------------------------
+    const rawWeeks = weeklyData.map(d => d.weekNum);
+
+    // Build a domain that inserts an empty slot after 52 when 53 exists
+    const xDomain = [];
+    rawWeeks.forEach((wk, idx) => {
+      xDomain.push(wk);
+      const next = rawWeeks[idx + 1];
+      if (wk === 52 && next === 53) {
+        xDomain.push("gap_52_53"); // dummy band for extra spacing
+      }
+    });
+
+    const xScale = d3
+      .scaleBand()
+      .domain(xDomain)
+      .range([margin.left, width - margin.right - 10])
+      .padding(0.3);
+
+    // Helper to get X for a real week number (ignores the gap key)
+    const getXForWeek = (weekNum) =>
+      xScale(weekNum) + xScale.bandwidth() / 2;
+
+    const yScale = d3
+      .scaleLinear()
+      .domain([0, 100])
+      .nice()
+      .range([height - margin.bottom, margin.top]);
+
+    const visibleTicks = xDomain.filter(v => v !== "gap_52_53");
+
+    const xAxis =
+      selectedMonth === "All"
+        ? d3
+            .axisBottom(xScale)
+            .tickValues(
+              visibleTicks.filter(
+                (wk, i) =>
+                  i % 3 === 0 || i === 0 || i === visibleTicks.length - 1
+              )
+            )
+            .tickFormat(weekNum => `Week${weekNum}`)
+        : d3
+            .axisBottom(xScale)
+            .tickValues(visibleTicks)
+            .tickFormat(weekNum => `wk${weekNum}`);
+
+    svg
+      .append("g")
+      .attr("transform", `translate(0,${height - margin.bottom})`)
+      .call(xAxis)
+      .selectAll("text")
+      .attr("transform", "rotate(-45)")
+      .style("text-anchor", "end")
+      .attr("dx", "-0.8em")
+      .attr("dy", "0.15em")
+      .style("font-size", "14px");
+
+    svg
+      .append("g")
+      .attr("transform", `translate(${margin.left},0)`)
+      .call(d3.axisLeft(yScale).tickFormat(d3.format(".0f")));
+
+    // ------------------------ LINE & DOTS (NO BREAKS FOR ZERO) ------------------------
+    const line = d3
+      .line()
+      .x(d => getXForWeek(d.weekNum))
+      .y(d => yScale(d.otif));
+
+    svg
+      .append("path")
+      .datum(weeklyData)
+      .attr("fill", "none")
+      .attr("stroke", "#224BFF")
+      .attr("stroke-width", 2.5)
+      .attr("d", line);
+
+    // Tooltip
+    let tooltip = d3
+      .select(svgRef.current.parentNode)
+      .select(".d3-tooltip");
+    if (tooltip.empty()) {
+      tooltip = d3
+        .select(svgRef.current.parentNode)
+        .append("div")
+        .attr("class", "d3-tooltip")
+        .style("position", "absolute")
+        .style("visibility", "hidden")
+        .style("background", "#fff")
+        .style("border", "1px solid #ccc")
+        .style("border-radius", "4px")
+        .style("padding", "8px 12px")
+        .style("font-size", "14px")
+        .style("box-shadow", "0 4px 12px rgba(0,0,0,0.15)")
+        .style("pointer-events", "none")
+        .style("z-index", "1000");
+    }
+
+    svg
+      .selectAll(".dot")
+      .data(weeklyData)
+      .enter()
+      .append("circle")
+      .attr("cx", d => getXForWeek(d.weekNum))
+      .attr("cy", d => yScale(d.otif))
+      .attr("r", 5)
+      .attr("fill", "#224BFF")
+      .style("cursor", "pointer")
+      .on("mouseover", (event, d) => {
+        const label =
+          selectedMonth === "All"
+            ? `Week${d.weekNum}`
+            : `wk${d.weekNum}`;
+        tooltip
+          .style("visibility", "visible")
+          .html(
+            `<strong>${label}</strong><br/>OTIF: ${d.otif.toFixed(2)}%`
+          );
+      })
+      .on("mousemove", event => {
+        const svgRect = svgRef.current.getBoundingClientRect();
+        const tooltipWidth = 140;
+        const tooltipHeight = 60;
+        let left = event.clientX - svgRect.left + 15;
+        let top = event.clientY - svgRect.top - 28;
+        if (left + tooltipWidth > svgRect.width) left -= tooltipWidth + 30;
+        if (top < 0) top = 0;
+        if (top + tooltipHeight > svgRect.height) top -= tooltipHeight;
+        tooltip.style("left", `${left}px`).style("top", `${top}px`);
+      })
+      .on("mouseout", () => tooltip.style("visibility", "hidden"));
+
+    svg
+      .append("text")
+      .attr("x", width / 2)
+      .attr("y", margin.top / 2)
+      .attr("text-anchor", "middle")
+      .style("font-size", "18px")
+      .style("font-weight", "600")
+      .text(
+        `Weekly OTIF Trend (${latestYear})${
+          selectedMonth !== "All" ? ` — ${selectedMonth}` : ""
+        }`
+      );
+
+    svg
+      .append("text")
+      .attr("x", width / 2)
+      .attr("y", height - 10)
+      .attr("text-anchor", "middle")
+      .style("font-size", "14px")
+      .text("Week");
+
+    svg
+      .append("text")
+      .attr("transform", "rotate(-90)")
+      .attr("x", -height / 2)
+      .attr("y", 20)
+      .attr("text-anchor", "middle")
+      .style("font-size", "14px")
+      .text("OTIF (%)");
+  }, [hasData, data, monthlyTrends, selectedMonth, latestYear]);
+
+  if (!hasData) {
     return (
-      <div style={{ position: "fixed", right: 24, bottom: 24, zIndex: 1300 }}>
-        <button
-          onClick={() => {}} // disables opening on assessment route
-          style={{
-            width: 60,
-            height: 60,
-            borderRadius: "50%",
-            background: "#7e2efc",
-            color: "#fff",
-            fontSize: "2rem",
-            border: "none",
-            cursor: "not-allowed",
-            opacity: 0.7,
-          }}
-          aria-label="Chatbot Disabled on Assessment"
-          disabled
-        >
-          🤖
-        </button>
+      <div className="alert alert-info" style={{ margin: "2rem 0" }}>
+        <strong>No weekly trend data available</strong> for the current selection.
       </div>
     );
   }
 
   return (
-    <div style={{ position: "fixed", right: 24, bottom: 24, zIndex: 1300 }}>
-      {!open && (
-        <button
-          onClick={() => setOpen(true)}
-          style={{
-            width: 60,
-            height: 60,
-            borderRadius: "50%",
-            background: "#7e2efc",
-            color: "#fff",
-            fontSize: "2rem",
-            border: "none",
-            cursor: "pointer",
-            boxShadow: "0 3px 12px rgba(137,27,247,0.17)",
-          }}
-          aria-label="Open Chatbot"
-        >
-          🤖
-        </button>
-      )}
-      {open && (
-        <div
-          className="virtual-assistant-chat-box"
-          style={{
-            width: 400,
-            height: 520,
-            background: "#fff",
-            borderRadius: 18,
-            boxShadow: "0 4px 18px rgba(137,27,247,0.12)",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <MethodOneVirtualAssistant
-            isOpen={true}
-            isCompact={true}
-            onClose={() => setOpen(false)}
-          />
-        </div>
-      )}
+    <div
+      style={{
+        margin: "20px 0",
+        position: "relative",
+        overflow: "visible",
+      }}
+    >
+      <div style={{ marginBottom: "16px", fontSize: "16px" }}>
+        <label style={{ fontWeight: "600" }}>
+          Select Month:{" "}
+          <select
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(e.target.value)}
+            style={{
+              marginLeft: "8px",
+              padding: "6px 12px",
+              fontSize: "15px",
+              borderRadius: "4px",
+            }}
+          >
+            {availableMonths.map(month => (
+              <option key={month} value={month}>
+                {month}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <svg
+        ref={svgRef}
+        width="100%"
+        height="450"
+        style={{ maxWidth: "100%", overflow: "visible" }}
+      />
     </div>
   );
-};
-
-export default ChatWidget;
-
-
---
-
-.methodone-virtual-assistant-container {
-  position: relative;
-  background: #fff;
-  font-family: Inter, Arial, sans-serif;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-around;
-}
-
-.methodone-virtual-assistant-container .virtual-assistant-header {
-  display: flex;
-  background: #872bcc;
-  color: #fff;
-  border-radius: 18px 18px 0 0;
-  padding: 15px 24px;
-  font-size: 1.11rem;
-  font-weight: 700;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.methodone-virtual-assistant-container .fullscreen-header {
-  display: flex;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  border-radius: 18px 18px 0 0;
-  z-index: 20;
-  background: #872bcc;
-  color: #fff;
-  padding: 15px 24px;
-  font-size: 1.11rem;
-  font-weight: 700;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.methodone-virtual-assistant-container .header-content {
-  display: flex;
-  align-items: center;
-}
-
-.methodone-virtual-assistant-container .header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.methodone-virtual-assistant-container .close-button {
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 1.7rem;
-  cursor: pointer;
-}
-
-.methodone-virtual-assistant-container .maximize-button {
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 1.18rem;
-  cursor: pointer;
-  margin-right: 7px;
-  margin-left: 4px;
-  display: flex;
-  align-items: center;
-}
-
-.methodone-virtual-assistant-container .collapse-button {
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 1.2rem;
-  cursor: pointer;
-}
-
-.methodone-virtual-assistant-container .main-content-wrapper {
-  display: flex;
-  flex-direction: row;
-  width: 100%;
-  overflow: auto;
-  border-radius: 12px;
-}
-
-.methodone-virtual-assistant-container .chat-history-sidebar {
-  height: 100%;
-  background: #fff;
-  border-right: 1px solid #eee;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.methodone-virtual-assistant-container .sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px 8px;
-  border-bottom: 1px solid #eee;
-}
-
-.methodone-virtual-assistant-container .sidebar-header span {
-  font-weight: bold;
-  font-size: 18px;
-}
-
-.methodone-virtual-assistant-container .sidebar-close-button {
-  border: none;
-  background: transparent;
-  font-size: 22px;
-  cursor: pointer;
-}
-
-.methodone-virtual-assistant-container .sidebar-content {
-  padding: 0 20px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.methodone-virtual-assistant-container .sidebar-item {
-  padding: 10px 0;
-  border-bottom: 1px solid #eee;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 15px;
-  cursor: pointer;
-}
-
-.methodone-virtual-assistant-container .main-chat-area {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: auto;
-}
-
-.methodone-virtual-assistant-container .welcome-title {
-  padding: 22px 28px 10px;
-  font-weight: 700;
-  font-size: 1.11rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #460073;
-  background: linear-gradient(180deg, #ad9be833, #c6b8f433);
-}
-
-.methodone-virtual-assistant-container .sample-questions {
-  margin-bottom: 12px;
-  padding: 0 28px;
-  background: linear-gradient(180deg, #c6b8f433, #fff);
-}
-
-.methodone-virtual-assistant-container .sample-questions-title {
-  font-weight: 600;
-  color: #000;
-  font-size: 0.95rem;
-  display: flex;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.methodone-virtual-assistant-container .sample-query-button {
-  margin-top: 8px;
-  padding: 12px 16px;
-  background: #fff;
-  border: 1px solid #a100ff52;
-  border-radius: 8px;
-  font-size: 0.92rem;
-  color: #000;
-  line-height: 1.4;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-}
-
-.methodone-virtual-assistant-container .non-fullscreen-welcome {
-  /* Padding handled inline due to conditional */
-}
-
-.methodone-virtual-assistant-container .welcome-message {
-  font-weight: 700;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #460073;
-}
-
-.methodone-virtual-assistant-container .options-grid {
-  display: grid;
-  margin-bottom: 7px;
-}
-
-.methodone-virtual-assistant-container .option-button {
-  background: #fff;
-  border: 1.7px solid #ebe0fb;
-  border-radius: 9px;
-  font-weight: 600;
-  color: #000;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  box-shadow: 0 2px 7px rgba(193, 126, 255, 0.06);
-}
-
-.methodone-virtual-assistant-container .chat-bubbles-container {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-}
-
-.methodone-virtual-assistant-container .chat-bubble-wrapper {
-  display: flex;
-  align-items: flex-end;
-  margin-bottom: 10px;
-  margin-top: 10px;
-}
-
-.methodone-virtual-assistant-container .chat-bubble-wrapper.user {
-  flex-direction: row-reverse;
-}
-
-.methodone-virtual-assistant-container .chat-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  color: #7e2efc;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 1rem;
-}
-
-.methodone-virtual-assistant-container .chat-bubble {
-  padding: 10px 15px;
-  box-shadow: 0 1px 6px rgba(186, 106, 255, 0.06);
-  font-size: 1.02rem;
-  text-align: left;
-  max-width: 74%;
-  min-width: 80px;
-  word-break: break-word;
-}
-
-.methodone-virtual-assistant-container .loading-indicator {
-  color: #aaa;
-  font-size: 1.01rem;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
-
-.methodone-virtual-assistant-container .loading-icon {
-  width: 32px;
-  height: 32px;
-  margin-right: 8px;
-}
-
-.methodone-virtual-assistant-container .error-message {
-  color: red;
-  font-size: 1.01rem;
-  text-align: center;
-  margin: 10px 0;
-}
-
-.methodone-virtual-assistant-container .input-bar {
-  border-top: 1.6px solid rgb(236, 238, 253);
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-direction: row;
-  border-radius: 12px;
-  margin: 20px 0 0 0;
-  position: relative;
-}
-
-.methodone-virtual-assistant-container .input-wrapper {
-  position: relative;
-  flex: 1;
-  display: flex;
-  align-items: center;
-}
-
-.methodone-virtual-assistant-container .chat-history-toggle {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: #7e2efc;
-  font-weight: 600;
-  font-size: 0.95rem;
-  cursor: pointer;
-  z-index: 2;
-  user-select: none;
-}
-
-.methodone-virtual-assistant-container .chat-history-toggle span {
-  display: flex;
-  align-items: center;
-}
-
-.methodone-virtual-assistant-container .separator {
-  font-size: 1.5rem;
-  margin-left: 3px;
-  margin-right: 3px;
-  line-height: 1;
-  font-weight: 100;
-  color: #7e2efc;
-  display: flex;
-  align-items: center;
-}
-
-.methodone-virtual-assistant-container .chat-input {
-  flex: 1;
-  /* Increased right padding (50px) so the text doesn't type underneath the send button */
-  padding: 12px 50px 12px 15px; 
-  border: 1.5px solid #edeef8;
-  border-radius: 12px; /* Slightly rounder to match modern UI */
-  font-size: 1.01rem;
-  background: #fafafd;
-  margin: 0;
-}
-
-.methodone-virtual-assistant-container .fullscreen-input {
-  padding-left: 156px;
-  border: 1px solid #a100ff52;
-}
-
-.methodone-virtual-assistant-container .send-button {
-  background: #7e2efc;
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  width: 34px;  /* Slightly smaller to fit beautifully inside the input box */
-  height: 34px;
-  cursor: pointer;
-  
-  /* 1. This perfectly centers the paper airplane icon inside the button */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  
-  /* 2. This anchors the button perfectly inside the right side of the input field */
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%); /* Mathematically guarantees perfect vertical centering */
-  margin: 0;
-}
-
-.methodone-virtual-assistant-container .footer-disclaimer {
-  padding: 12px 30px;
-  font-size: 0.91rem;
-  color: #726590;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.methodone-virtual-assistant-container .footer-icons {
-  display: flex;
-}
-
-.methodone-virtual-assistant-container .sidebar-new-chat-wrapper {
-  padding: 8px 12px;
-  border-bottom: 1px solid #eee;
-}
-
-.methodone-virtual-assistant-container .sidebar-new-chat-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: none;
-  background: #f3e6ff;
-  color: #7e2efc;
-  font-size: 0.9rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.methodone-virtual-assistant-container .sidebar-new-chat-button:hover {
-  background: #e8d5ff;
-}
-
-.chat-markdown p {
-  margin: 0 0 4px 0;
-}
-
-.chat-markdown ul,
-.chat-markdown ol {
-  margin: 4px 0 4px 1.2rem;
-  padding-left: 1.2rem;
-}
-
-.chat-markdown ul {
-  list-style-type: disc;
-}
-
-.chat-markdown ol {
-  list-style-type: decimal;
-}
-
-.chat-markdown li {
-  margin-bottom: 4px;
-}
-
-.chat-markdown ul,
-.chat-markdown ol {
-  margin: 4px 0 4px 1.2rem;
-  padding-left: 1.2rem;
-}
-
-.chat-markdown li {
-  margin-bottom: 4px;
-}
-
-.chart-wrapper-bubble {
-    background: #ffffff;
-    border-radius: 8px;
-    padding: 10px;
-    border: 1px solid #e2e8f0;
-    overflow: hidden; /* Prevents X-axis labels from leaking */
-}
-
-/* In MethodOneVirtualAssistant.css */
-.methodone-virtual-assistant-container .chat-bubble.bot {
-    max-width: 90% !important; /* Give it more room */
-    width: 100%;
-}
-
-.chart-wrapper-bubble {
-   margin-top: 12px;
-    width: 100%;
-    /* Remove overflow: hidden if it exists here */
-    overflow-x: auto; 
-    display: block;
-    background: #fff;
-}
-
-/* Markdown tables inside chat bubbles */
-.chat-markdown table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 8px 0;
-  font-size: 13px;
-}
-
-.chat-markdown th,
-.chat-markdown td {
-  border: 1px solid #e2e8f0;
-  padding: 6px 8px;
-}
-
-.chat-markdown th {
-  background-color: #f5f5f5;
-  font-weight: 600;
-  text-align: left;
-}
-
-.chat-markdown tbody tr:nth-child(even) {
-  background-color: #faf5ff;
 }
