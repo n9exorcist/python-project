@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useRef, Suspense, lazy } from "react";
 import CustomInput from "../common/CustomInput";
 import SearchAnalytics from "./SearchAnalytics";
+import VirtualizedLogs from "./VirtualizedLogs";
 
 const HeavyStats = lazy(() => import("./HeavyStats"));
 
@@ -43,6 +44,8 @@ export default function TaskDashboard() {
 
       {/* Question 3 & 5: useMemo & useDeferredValue inside this component */}
       <SearchAnalytics tasks={tasks} />
+
+      <VirtualizedLogs />
 
       {/* Question 6: Suspense boundary */}
       <Suspense
