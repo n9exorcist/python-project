@@ -5,6 +5,7 @@ import CustomInput from "../common/CustomInput";
 import SearchAnalytics from "./SearchAnalytics";
 import VirtualizedLogs from "./VirtualizedLogs";
 
+// Question 6: Suspense & Lazy Loading
 const HeavyStats = lazy(() => import("./HeavyStats"));
 
 export default function TaskDashboard() {
@@ -12,6 +13,7 @@ export default function TaskDashboard() {
   const [isUrgent, setIsUrgent] = useState(false);
   const inputRef = useRef();
 
+  // useCallback prevents re-creating the function (Question #5)
   const addTask = useCallback((taskName) => {
     setTasks((prev) => [...prev, taskName]);
   }, []);
@@ -21,9 +23,11 @@ export default function TaskDashboard() {
   //   };
 
   const handleReset = () => {
+    // Automatic Batching (Question #4) - Only triggers ONE re-render
     setTasks([]);
     setIsUrgent(false);
 
+    // Question 7: useImperativeHandle
     inputRef.current.clearAndFocus();
   };
 
@@ -45,14 +49,17 @@ export default function TaskDashboard() {
       {/* Question 3 & 5: useMemo & useDeferredValue inside this component */}
       <SearchAnalytics tasks={tasks} />
 
-      <VirtualizedLogs />
-
       {/* Question 6: Suspense boundary */}
       <Suspense
         fallback={<div className="animate-pulse">Loading Analytics...</div>}
       >
-        {/* <HeavyStats tasks={tasks} /> */}
+        <HeavyStats tasks={tasks} onDelete={handleReset} />
       </Suspense>
+
+      <div className="mt-8">
+        <h2 className="font-bold">System Logs (Virtualized)</h2>
+        <VirtualizedLogs />
+      </div>
     </div>
   );
 }

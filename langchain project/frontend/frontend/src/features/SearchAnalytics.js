@@ -2,8 +2,14 @@ import React, { useState, useDeferredValue, useMemo } from "react";
 
 const SearchAnalytics = ({ tasks }) => {
   const [query, setQuery] = useState("");
+
+  // Question 3: Concurrent Features
+  // deferredQuery lets React prioritize the "typing" over the "filtering"
+  // while the heavy filtering happens at a lower priority.
   const deferredQuery = useDeferredValue(query);
 
+  // Question 5: useMemo for heavy calculations
+  // Only recalculates the count when the 'tasks' or 'deferredQuery' actually change
   const filteredCount = useMemo(() => {
     console.log("🏃‍♂️ useMemo is calculating the filter...");
 
@@ -27,5 +33,9 @@ const SearchAnalytics = ({ tasks }) => {
     </div>
   );
 };
+
+// Question 2: Shallow Comparison
+// React.memo prevents this entire component from re-rendering
+// unless the 'tasks' array reference actually changes
 
 export default React.memo(SearchAnalytics);

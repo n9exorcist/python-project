@@ -12,10 +12,12 @@ const CustomInput = forwardRef(({ onAdd }, ref2) => {
   const [val, setVal] = useState("");
   const innerInputRef = useRef();
 
+  // Question 7: Giving the parent controlled access to the child's DOM/Logic
+  // This "exposes" specific functions to the parent component
   useImperativeHandle(ref2, () => ({
     clearAndFocus: () => {
-      setVal("");
-      innerInputRef.current.focus();
+      setVal(""); // Clear the internal state
+      innerInputRef.current.focus(); // Focus the DOM element
     },
   }));
 
