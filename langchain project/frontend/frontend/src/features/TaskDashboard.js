@@ -9,6 +9,7 @@ import VirtualizedLogs from "./VirtualizedLogs";
 const HeavyStats = lazy(() => import("./HeavyStats"));
 
 export default function TaskDashboard() {
+  // 1. The parent holds the actual state array in memory
   const [tasks, setTasks] = useState([]);
   const [isUrgent, setIsUrgent] = useState(false);
   const inputRef = useRef();
@@ -22,14 +23,14 @@ export default function TaskDashboard() {
   //     setTasks((prev) => [...prev, taskName]);
   //   };
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     // Automatic Batching (Question #4) - Only triggers ONE re-render
     setTasks([]);
     setIsUrgent(false);
 
     // Question 7: useImperativeHandle
     inputRef.current.clearAndFocus();
-  };
+  }, []);
 
   return (
     <div className="p-6">
@@ -40,14 +41,11 @@ export default function TaskDashboard() {
         {/* The parent calls a function inside the child directly! */}
         <button
           onClick={handleReset}
-          className="bg-red-500 text-white p-2 rounded"
+          className="bg-red-500 text-black p-2 rounded"
         >
           Reset Dashboard
         </button>
       </div>
-
-      {/* Question 3 & 5: useMemo & useDeferredValue inside this component */}
-      <SearchAnalytics tasks={tasks} />
 
       {/* Question 6: Suspense boundary */}
       <Suspense
@@ -55,6 +53,10 @@ export default function TaskDashboard() {
       >
         <HeavyStats tasks={tasks} onDelete={handleReset} />
       </Suspense>
+
+      {/* Question 3 & 5: useMemo & useDeferredValue inside this component */}
+      {/* 2. The parent hands the array down to the child here! */}
+      <SearchAnalytics tasks={tasks} />
 
       <div className="mt-8">
         <h2 className="font-bold">System Logs (Virtualized)</h2>

@@ -21,11 +21,11 @@ const SearchAnalytics = ({ tasks }) => {
   }, [tasks, deferredQuery]);
 
   return (
-    <div className="p-4 border mt-4">
+    <div className="p-4 border">
       <input
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search..."
-        className="border p-2"
+        className="border p-2 mt-4"
       />
       <p>Actual Query (Fast): {query}</p>
       <p>Deferred Query (Slow): {deferredQuery}</p>

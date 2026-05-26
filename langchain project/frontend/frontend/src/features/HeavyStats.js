@@ -18,7 +18,7 @@ const HeavyStats = React.memo(({ tasks = [], onDelete }) => {
   }, [tasks]);
 
   return (
-    <div className="p-4 border border-gray-200 rounded-lg bg-gray-50 my-4 shadow-sm">
+    <div className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
       <h3 className="text-sm font-bold text-gray-700 mb-2">
         📊 Heavy Analytics Core Chunk
       </h3>
@@ -31,10 +31,11 @@ const HeavyStats = React.memo(({ tasks = [], onDelete }) => {
 
       <button
         onClick={onDelete}
-        className="mt-3 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-semibold px-3 py-1.5 rounded transition-colors"
+        className="my-3 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-semibold px-3 py-1.5 rounded transition-colors"
       >
         Clear Stats Array
       </button>
+      <br />
     </div>
   );
 });
