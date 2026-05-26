@@ -4,6 +4,9 @@ import React, { useState, useCallback, useRef, Suspense, lazy } from "react";
 import CustomInput from "../common/CustomInput";
 import SearchAnalytics from "./SearchAnalytics";
 import VirtualizedLogs from "./VirtualizedLogs";
+import SearchFilter from "./SearchFilter";
+import { DebouncingValue } from "./DebouncingValue";
+import { useThrottleValue } from "./useThrottleValue";
 
 // Question 6: Suspense & Lazy Loading
 const HeavyStats = lazy(() => import("./HeavyStats"));
@@ -12,6 +15,9 @@ export default function TaskDashboard() {
   // 1. The parent holds the actual state array in memory
   const [tasks, setTasks] = useState([]);
   const [isUrgent, setIsUrgent] = useState(false);
+  const [input, setInput] = useState(" ");
+  const debounceInput = DebouncingValue(input, 500);
+  const throttledInput = useThrottleValue(input, 5000);
   const inputRef = useRef();
 
   // useCallback prevents re-creating the function (Question #5)
@@ -61,6 +67,19 @@ export default function TaskDashboard() {
       <div className="mt-8">
         <h2 className="font-bold">System Logs (Virtualized)</h2>
         <VirtualizedLogs />
+      </div>
+
+      <div className="mt-2">
+        <h3>Debounced & Throttled </h3>
+        <input value={input} onChange={(e) => setInput(e.target.value)} />
+        <p>Immediate:{input}</p>
+        <p>Debounced: {debounceInput}</p>
+        <p>Throttled:{throttledInput}</p>
+      </div>
+
+      <div className="mt-2">
+        <h3>Search Filter</h3>
+        <SearchFilter />
       </div>
     </div>
   );
