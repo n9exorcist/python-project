@@ -1,259 +1,54 @@
-// src/hooks/useOTIFData.js
+// hooks/useMonthlyMetrics.js
 import { useState, useEffect } from "react";
-import otifJson from "../components/data/OTIF-waterfall.json"; // Local file
+import otifJson from "../components/data/OTIF-waterfall.json"; // Local file for fallback
 
-const useOTIFData = () => {
-  const [data, setData] = useState(null);
+export function useMonthlyMetrics(month) {
+  const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
+      setError(null);
 
       // 1️⃣ Try local file first
       try {
-        if (!otifJson || typeof otifJson !== "object") {
-          throw new Error("Invalid local OTIF data format");
+        if (
+          !otifJson ||
+          typeof otifJson !== "object" ||
+          !otifJson["2024"] ||
+          !otifJson["2024"][month]
+        ) {
+          throw new Error(
+            "Invalid or missing local OTIF data for the specified month"
+          );
         }
-        setData(otifJson);
+        const localMetrics = otifJson["2024"][month]?.Overall_Monthly_Metrics;
+        if (!localMetrics) {
+          throw new Error("Missing Overall_Monthly_Metrics in local data");
+        }
+        setMetrics(localMetrics);
         setLoading(false);
         return; // Success: Skip fallback
       } catch (localErr) {
 
       }
 
-      // 2️⃣ Fallback to API fetch
+      // 2️⃣ Fallback to API fetch for the specific month
       try {
-        const response = await fetch(`${process.env.REACT_APP_API_URL}/2024`);
-        if (!response.ok) throw new Error("Network error");
-
-        const json = await response.json();
-        setData(json);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, []);
-
-  return { data, loading, error };
-};
-
-export default useOTIFData;
------
-
-export const fetchKpiData = async (
-  setKpiData,
-  setKpiLoading,
-  setKpiError,
-  setClientData,
-  setClientHeatData,
-  setWeeklyData,
-  setRawData,
-  setChannelOptions,
-  setProductH1Options,
-  setBrandH2Options,
-  getAccessToken
-) => {
-  setKpiLoading(true);
-  setKpiError(null);
-
-  try {
-    // Fetch token if getAccessToken is provided
-    let accessToken = "";
-    if (typeof getAccessToken === "function") {
-      accessToken = await getAccessToken();
-  
-    }
-
-    const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-    const response = await fetch(`${API_BASE}/kpi-calculation`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-      credentials: "include",
-    });
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-    const responseData = await response.json();
-    
-
-    // Defensive: handle alternate key names from API
-    const kpiWaterfall = responseData.waterfall_json || responseData.waterfall || responseData.otifData || {};
-    const kpiHeatmap = responseData.heatmap_json || responseData.heatmap || {};
-    const kpiTrendline = responseData.trendline_json || responseData.trendline || {};
-
-    setKpiData({
-      otifData: kpiWaterfall,
-      trendlineData: kpiTrendline,
-      heatmapData: kpiHeatmap,
-    });
-
-    setClientData(kpiWaterfall);
-    setClientHeatData(kpiHeatmap);
-
-    // Build weekly metrics (fixed: camelCase keys, correct inner props)
-    let allWeeklyMetrics = [];
-    Object.keys(kpiTrendline).forEach((year) => {
-      Object.keys(kpiTrendline[year]).forEach((month) => {
-        const monthlyData = kpiTrendline[year][month] || {};
-        if (monthlyData.WeeklyMetrics) {  // Fixed: camelCase
-          allWeeklyMetrics = allWeeklyMetrics.concat(
-            monthlyData.WeeklyMetrics.map((metric) => ({
-              week: metric.week || metric.Week || "",
-              OTIF: metric.OTIF ?? metric["OTIF%"] ?? 0,
-              year,
-              month,
-              channel: "All",
-              product_h1: "All",  // Note: kept as product_h1 for consistency with chart props
-              brand_h2: "All"
-            }))
-          );
-        }
-      });
-    });
-    
-    setWeeklyData(allWeeklyMetrics);
-
-    // Build raw monthly data (unchanged, already correct)
-    let allRawData = [];
-    Object.keys(kpiTrendline).forEach((year) => {
-      Object.keys(kpiTrendline[year]).forEach((month) => {
-        const monthlyData = kpiTrendline[year][month] || {};
-        if (monthlyData.OverallMonthlyMetrics) {
-          allRawData.push({
-            year,
-            month,
-            ...monthlyData.OverallMonthlyMetrics,
-          });
-        }
-      });
-    });
-    setRawData(allRawData);
-
-    // Extract unique filter dropdown options (fixed: camelCase arrays, no underscores in props)
-    const channelSet = new Set(["All"]);
-    const productH1Set = new Set(["All"]);
-    const brandH2Set = new Set(["All"]);
-    Object.keys(kpiTrendline).forEach((year) => {
-      Object.keys(kpiTrendline[year]).forEach((month) => {
-        const monthlyData = kpiTrendline[year][month] || {};
-        (monthlyData.ChannelMetrics || []).forEach((metric) => {  // Fixed: camelCase
-          if (metric.channel) channelSet.add(metric.channel);
-        });
-        (monthlyData.ProductHierarchy1Metrics || []).forEach((metric) => {  // Fixed: camelCase
-          if (metric.producth1) productH1Set.add(metric.producth1);  // Fixed: no underscore
-        });
-        (monthlyData.ProductHierarchy2Metrics || []).forEach((metric) => {  // Fixed: camelCase
-          if (metric.brandh2) brandH2Set.add(metric.brandh2);  // Fixed: no underscore
-        });
-      });
-    });
-
-    setChannelOptions(Array.from(channelSet));
-    setProductH1Options(Array.from(productH1Set));
-    setBrandH2Options(Array.from(brandH2Set));
-  } catch (err) {
-    setKpiError(`Fetch failed: ${err.message}`);
-  } finally {
-    setKpiLoading(false);
-  }
-};
----
-
-const API_BASE =
-  process.env.REACT_APP_API_BASE_URL || `${process.env.REACT_APP_API_URL}/api`;
-
-const handleResponse = async (response) => {
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || "API request failed");
-  }
-  return response.json();
-};
-
-export const apiService = {
-  getOTIFData: async (year = "2024") => {
-    const response = await fetch(`${API_BASE}/${year}`);
-    const jsonData = await handleResponse(response);
-
-    // Transform data here instead of in the component
-    const transformedData = {};
-    Object.keys(jsonData).forEach((month) => {
-      transformedData[month] = {
-        Channel_Metrics: jsonData[month].Channel_Metrics || [],
-        Overall_Monthly_Metrics: jsonData[month].Overall_Monthly_Metrics || {},
-      };
-    });
-
-    return transformedData;
-  },
-
-  getCapabilities: async () => {
-    const response = await fetch(`${API_BASE}/capabilities`);
-    return handleResponse(response);
-  },
-
-  // Add caching layer
-  getCachedOTIFData: (() => {
-    let cache = null;
-    return async (year) => {
-      if (!cache) {
-        cache = await apiService.getOTIFData(year);
-      }
-      return cache;
-    };
-  })(),
-};
------
-
-// src/hooks/useDropdownStructure.js
-import { useState, useEffect } from "react";
-import kpiStructureJson from "../components/data/kpi_structure.json"; // local copy
-
-const useDropdownStructure = () => {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-
-      /* 1️⃣ Try the local file first */
-      try {
-        if (!kpiStructureJson || typeof kpiStructureJson !== "object") {
-          throw new Error("Invalid local KPI structure format");
-        }
-        setData(kpiStructureJson);
-        setLoading(false);
-        return; // success ⇒ skip the fallback
-      } catch (localErr) {
-
-      }
-
-      /* 2️⃣ Fallback to the backend API */
-      try {
-        const url = `${process.env.REACT_APP_API_URL}/api/kpi_structure`;
-      
-        const response = await fetch(url);
-
+        const response = await fetch(
+          `${process.env.REACT_APP_API_URL}/2024/${month}`
+        );
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(
-            `Network error: ${response.status} ${response.statusText} – ${errorText}`
-          );
+          throw new Error(`Network error: ${response.status}`);
         }
-
         const json = await response.json();
-        setData(json);
+        const fetchedMetrics = json?.Overall_Monthly_Metrics;
+        if (!fetchedMetrics) {
+          throw new Error("Missing Overall_Monthly_Metrics in API response");
+        }
+        setMetrics(fetchedMetrics);
       } catch (fetchErr) {
 
         setError(fetchErr.message);
@@ -262,912 +57,811 @@ const useDropdownStructure = () => {
       }
     };
 
+    if (month) {
+      loadData();
+    } else {
+      setError("Month parameter is required");
+      setLoading(false);
+    }
+  }, [month]);
+
+  return { metrics, loading, error };
+}
+--
+
+// src/hooks/useTrendlineData.js
+import { useState, useEffect } from "react";
+import trendlineJson from "../components/data/OTIF-trendline.json"; // Local file
+
+const useTrendlineData = (
+  channelFilter = "Overall",
+  productH1Filter = "All",
+  brandH2Filter = "All"
+) => {
+  const [monthlyData, setMonthlyData] = useState([]);
+  const [weeklyData, setWeeklyData] = useState([]);
+  const [rawData, setRawData] = useState(null);
+  const [channelOptions, setChannelOptions] = useState(["Overall"]);
+  const [productH1Options, setProductH1Options] = useState(["All"]);
+  const [brandH2Options, setBrandH2Options] = useState(["All"]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadAndProcessData = async () => {
+      setLoading(true);
+      let data = null;
+
+      // 1️⃣ Try local file first
+      try {
+        if (!trendlineJson || typeof trendlineJson !== "object") {
+          throw new Error("Invalid local trendline data format");
+        }
+        // Basic validation: Check for at least one year key with expected structure
+        const years = Object.keys(trendlineJson).filter((key) => !isNaN(key));
+        if (
+          years.length === 0 ||
+          !trendlineJson[years[0]] ||
+          typeof trendlineJson[years[0]] !== "object"
+        ) {
+          throw new Error("Local data missing expected year/month structure");
+        }
+        data = trendlineJson;
+      } catch (localErr) {
+        
+        // 2️⃣ Fallback to API fetch
+        try {
+          const response = await fetch(
+            `${process.env.REACT_APP_API_URL}/trendline`
+          );
+          if (!response.ok) {
+            throw new Error("Failed to fetch trendline data");
+          }
+          data = await response.json();
+          // Same basic validation for fetched data
+          const fetchedYears = Object.keys(data).filter((key) => !isNaN(key));
+          if (
+            fetchedYears.length === 0 ||
+            !data[fetchedYears[0]] ||
+            typeof data[fetchedYears[0]] !== "object"
+          ) {
+            throw new Error(
+              "Fetched data missing expected year/month structure"
+            );
+          }
+        } catch (fetchErr) {
+          setError(fetchErr.message);
+          setLoading(false);
+          return; // Exit if both fail
+        }
+      }
+
+      // If data is loaded (from local or API), process it
+      if (data) {
+        setRawData(data);
+
+        const monthOrder = [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ];
+
+        // Extract years dynamically
+        const years = Object.keys(data).filter((key) => !isNaN(key)); // Assume year keys are numeric (e.g., "2024", "2025")
+
+        // Extract options
+        const channels = new Set(["Overall"]);
+        const productH1s = new Set(["All"]);
+        const brandH2s = new Set(["All"]);
+        years.forEach((year) => {
+          if (data[year]) {
+            Object.values(data[year]).forEach((month) => {
+              month.Channel_Metrics?.forEach((channel) =>
+                channels.add(channel.channel)
+              );
+              month.ProductHierarchy1_Metrics?.forEach((p) =>
+                productH1s.add(p.product_h1)
+              );
+              month.ProductHierarchy2_Metrics?.forEach((b) =>
+                brandH2s.add(b.brand_h2)
+              );
+            });
+          }
+        });
+        setChannelOptions(Array.from(channels));
+        setProductH1Options(Array.from(productH1s));
+        setBrandH2Options(Array.from(brandH2s));
+
+        // Format monthly data
+        const formatMonthlyData = (data) => {
+          const result = [];
+          years.forEach((year) => {
+            if (!data[year]) return;
+            Object.keys(data[year])
+              .sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b))
+              .forEach((month) => {
+                let metrics = data[year][month].OverallMonthlyMetrics;
+                if (channelFilter !== "Overall") {
+                  const channel = data[year][month].Channel_Metrics?.find(
+                    (c) => c.channel === channelFilter
+                  );
+                  if (!channel) return;
+                  metrics = channel;
+                }
+                if (productH1Filter !== "All") {
+                  const product = data[year][
+                    month
+                  ].ProductHierarchy1_Metrics?.find(
+                    (p) => p.product_h1 === productH1Filter
+                  );
+                  if (!product) return;
+                  metrics = product;
+                }
+                if (brandH2Filter !== "All") {
+                  const brand = data[year][
+                    month
+                  ].ProductHierarchy2_Metrics?.find(
+                    (b) => b.brand_h2 === brandH2Filter
+                  );
+                  if (!brand) return;
+                  metrics = brand;
+                }
+                result.push({
+                  period: `${month} ${year}`, // Include year in period
+                  OTIF: metrics["OTIF%"] || 0,
+                  DIF: metrics["DIF%"] || 0,
+                  DOT: metrics["DOT Count %"] || 0,
+                });
+              });
+          });
+          return result;
+        };
+
+        // Format weekly data with Week 5 for January, March, May
+        const formatWeeklyData = (data) => {
+          const result = [];
+          const monthsWithWeek5 = ["January", "March", "May"];
+
+          years.forEach((year) => {
+            if (!data[year]) return;
+            Object.keys(data[year])
+              .sort((a, b) => monthOrder.indexOf(a) - monthOrder.indexOf(b))
+              .forEach((month) => {
+                let metrics = data[year][month].OverallMonthlyMetrics;
+                if (channelFilter !== "Overall") {
+                  const channel = data[year][month].Channel_Metrics?.find(
+                    (c) => c.channel === channelFilter
+                  );
+                  if (!channel) return;
+                  metrics = channel;
+                }
+                if (productH1Filter !== "All") {
+                  const product = data[year][
+                    month
+                  ].ProductHierarchy1_Metrics?.find(
+                    (p) => p.product_h1 === productH1Filter
+                  );
+                  if (!product) return;
+                  metrics = product;
+                }
+                if (brandH2Filter !== "All") {
+                  const brand = data[year][
+                    month
+                  ].ProductHierarchy2_Metrics?.find(
+                    (b) => b.brand_h2 === brandH2Filter
+                  );
+                  if (!brand) return;
+                  metrics = brand;
+                }
+                const weeklyMetrics = data[year][month].Weekly_Metrics || [];
+                const allWeeks = [
+                  ...weeklyMetrics,
+                  ...(monthsWithWeek5.includes(month)
+                    ? [
+                        {
+                          week: "Week5",
+                          "OTIF%": 0, // Default to 0
+                          "DIF%": 0,
+                          "DOT Count %": 0,
+                        },
+                      ]
+                    : []),
+                ].sort((a, b) => {
+                  const weekA = parseInt(a.week.replace("Week", ""));
+                  const weekB = parseInt(b.week.replace("Week", ""));
+                  return weekA - weekB;
+                });
+
+                allWeeks.forEach((week) => {
+                  const weeklyOTIF =
+                    channelFilter !== "Overall" ||
+                    productH1Filter !== "All" ||
+                    brandH2Filter !== "All"
+                      ? metrics["OTIF%"] || 0
+                      : week["OTIF%"] || 0;
+                  const weeklyDIF =
+                    channelFilter !== "Overall" ||
+                    productH1Filter !== "All" ||
+                    brandH2Filter !== "All"
+                      ? metrics["DIF%"] || 0
+                      : week["DIF%"] || 0;
+                  const weeklyDOT =
+                    channelFilter !== "Overall" ||
+                    productH1Filter !== "All" ||
+                    brandH2Filter !== "All"
+                      ? metrics["DOT Count %"] || 0
+                      : week["DOT Count %"] || 0;
+                  result.push({
+                    period: `${month} ${week.week} ${year}`, // Include year in period
+                    OTIF: weeklyOTIF,
+                    DIF: weeklyDIF,
+                    DOT: weeklyDOT,
+                  });
+                });
+              });
+          });
+          return result;
+        };
+
+        setMonthlyData(formatMonthlyData(data));
+        setWeeklyData(formatWeeklyData(data));
+      }
+      setLoading(false);
+    };
+
+    loadAndProcessData();
+  }, [channelFilter, productH1Filter, brandH2Filter]);
+
+  return {
+    monthlyData,
+    weeklyData,
+    rawData,
+    channelOptions,
+    productH1Options,
+    brandH2Options,
+    loading,
+    error,
+  };
+};
+
+export default useTrendlineData;
+---
+
+// src/hooks/usePeerSGAData.js
+import { useState, useEffect } from "react";
+import sgnaJson from "../components/data/sgna.json"; // Local file
+
+const usePeerSGAData = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      // First try local import
+      try {
+        if (
+          !sgnaJson ||
+          typeof sgnaJson !== "object" ||
+          !sgnaJson.companies ||
+          !Array.isArray(sgnaJson.companies)
+        ) {
+          throw new Error(
+            "Invalid local data format: expected object with companies array"
+          );
+        }
+        setData(sgnaJson);
+        setLoading(false);
+      } catch (localError) {
+        // Fallback to fetching from backend
+        try {
+          const response = await fetch(
+            `${process.env.REACT_APP_API_URL}/sgnachart`
+          );
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const json = await response.json();
+          // Validate expected structure
+          if (!json.companies || !Array.isArray(json.companies)) {
+            throw new Error(
+              "Invalid fetched format: expected object with companies array"
+            );
+          }
+          setData(json);
+          setLoading(false);
+        } catch (fetchError) {
+          setError(fetchError.message);
+          setLoading(false);
+        }
+      }
+    };
+
     loadData();
   }, []);
 
   return { data, loading, error };
 };
 
-export default useDropdownStructure;
-----
+export default usePeerSGAData;
+--
 
-/* eslint-disable no-console */
-import React, { useRef, useState, useEffect, useMemo } from "react";
-import { useSelector, useDispatch } from "react-redux";
-import { unlockTab } from "../slices/tabAccessSlice";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
-import { useLocation, useNavigate } from "react-router-dom";
-import { useKPIBenchmarkingTab } from "../hooks/useKPIBenchmarkingTab";
-import getTabConfig from "./assessmentTabs";
-import Loader from "./common/Loader";
-import { useUser } from "../components/usecontext/UserContext";
-import "../assets/css/ViewAssessment.css";
-import { skipToken } from "@reduxjs/toolkit/query";
+// src/hooks/usePeerInventoryData.js
+import { useState, useEffect } from "react";
+import inventoryJson from "../components/data/inventory.json"; // Local file
 
-import {
-  useGetMaturityAssessmentQuery,
-  useGetKpiCalculationQuery,
-  useGetKpiWaterfallDataQuery,
-  useGetKpiTrendlineDataQuery,
-  useGetFinancialAnalysisQuery,
-  useGetRecommendationsQuery,
-  useGetBusinessCaseQuery,
-  useGetExecutiveSummaryQuery,
-  useGetKpiMonthsQuery,
-  useGetKpiChannelsQuery,
-  useGetKpiProductH1sQuery,
-  useGetKpiBrandH2sQuery,
-  setTokenGetter,
-} from "../services/kpiApi";
+const usePeerInventoryData = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-const GRANULARITIES = [
-  { label: "Product", value: "product_heirarchy_1-classification" },
-  { label: "Category", value: "product_heirarchy_2-super_category" },
-  { label: "Brand", value: "product_heirarchy_3-_brand" },
-];
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      // First try local import
+      try {
+        if (
+          !inventoryJson ||
+          typeof inventoryJson !== "object" ||
+          !inventoryJson.companies ||
+          !Array.isArray(inventoryJson.companies)
+        ) {
+          throw new Error(
+            "Invalid local data format: expected object with companies array"
+          );
+        }
+        setData(inventoryJson);
+        setLoading(false);
+      } catch (localError) {
 
-const ASSESSMENT_TYPE_MAPPING = {
-  Plan: "Planning",
-  Source: "Procurement",
-  Fulfil: "Fulfillment",
+        // Fallback to fetching from backend
+        try {
+          const response = await fetch(
+            `${process.env.REACT_APP_API_URL}/inventory`
+          );
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const json = await response.json();
+          // Validate expected structure
+          if (!json.companies || !Array.isArray(json.companies)) {
+            throw new Error(
+              "Invalid fetched format: expected object with companies array"
+            );
+          }
+          setData(json);
+          setLoading(false);
+        } catch (fetchError) {
+
+          setError(fetchError.message);
+          setLoading(false);
+        }
+      }
+    };
+
+    loadData();
+  }, []);
+
+  return { data, loading, error };
 };
 
-function ViewAssessment({ user }) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const dispatch = useDispatch();
-  const params = new URLSearchParams(location.search);
-  const selectedTab = params.get("tab") || "Templates";
-  const { getAccessToken } = useUser();
+export default usePeerInventoryData;
 
-  // ✅ Register MSAL token getter globally for all kpiApi endpoints
-  useEffect(() => {
-    setTokenGetter(getAccessToken);
-  }, [getAccessToken]);
+--
 
-  const unlockedTabs = useSelector((state) => state.tabAccess.unlockedTabs);
-  // 🔹 Read uploaded files from Redux so we can control Save & Continue
-  const uploadedFiles = useSelector(
-    (state) => state.fileUpload?.files || []
-  );
-  const hasTemplateFiles = uploadedFiles.length > 0;
+  import { useState, useCallback } from "react";
 
-  const [visitedTabs, setVisitedTabs] = useState(new Set([selectedTab]));
-  const [currentPage, setCurrentPage] = useState(1);
-  const [surveyResponseFile, setSurveyResponseFile] = useState(null);
-  const [roleDeptFile, setRoleDeptFile] = useState(null);
-  const [selectedSheet, setSelectedSheet] = useState("Sheet1");
-  const [sheetNames, setSheetNames] = useState([]);
-  const [assessmentType, setAssessmentType] = useState("Plan");
-  const [selectedKPI, setSelectedKPI] = useState("");
-  const [selectedKPIs, setSelectedKPIs] = useState([]);
-  const [selectedFunction, setSelectedFunction] = useState("");
-  const [channelFilter, setChannelFilter] = useState("All");
-  const [productH1Filter, setProductH1Filter] = useState("All");
-  const [brandH2Filter, setBrandH2Filter] = useState("All");
-  const [heatmapGranularity, setHeatmapGranularity] = useState(
-    GRANULARITIES[0].value
-  );
+const API_URL = `${process.env.REACT_APP_API_URL}/financial-analyze`;
 
-  // Interactive filters used by dropdowns + waterfall + trendline
-  const [selectedMonth, setSelectedMonth] = useState(["Overall"]);
-  const [selectedChannel, setSelectedChannel] = useState(["Overall"]);
-  const [selectedProductLevel1, setSelectedProductLevel1] =
-    useState(["Overall"]);
-  const [selectedBrand, setSelectedBrand] = useState(["Overall"]);
+const useFinancialAnalysis = (user, getAccessToken) => {
+  const [financialData, setFinancialData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  // Base filters used ONLY for /kpi-calculation (never changed on user filter)
-  const [baseMonth, setBaseMonth] = useState(["Overall"]);
-  const [baseChannel, setBaseChannel] = useState(["Overall"]);
-  const [baseProductH1, setBaseProductH1] = useState(["Overall"]);
-  const [baseBrandH2, setBaseBrandH2] = useState(["Overall"]);
+  const fetchAnalysis = useCallback(async (params = {}) => {
+    setLoading(true);
+    setError(null);
 
-  // ✅ Trends page local state
-  const [trendChannel, setTrendChannel] = useState("All");
-  const [trendProductH1, setTrendProductH1] = useState("All");
-  const [trendBrand, setTrendBrand] = useState("All");
+    try {
+      const queryString = new URLSearchParams(params).toString();
+      const url = queryString ? `${API_URL}?${queryString}` : API_URL;
 
-  const [downloadedScreenshots, setDownloadedScreenshots] = useState({});
-  const [tooltip, setTooltip] = useState({
-    visible: false,
-    message: "",
-    x: 0,
-    y: 0,
-  });
-
-  const showTooltip = (e, message) => {
-    const rect = e.target.getBoundingClientRect();
-    let x = rect.right + 8;
-    let y = rect.top + window.scrollY;
-    const tooltipWidth = 260,
-      margin = 16;
-    if (x + tooltipWidth + margin > window.innerWidth) {
-      x = rect.left - tooltipWidth - 8;
-      if (x < margin) x = margin;
-    }
-    setTooltip({ visible: true, message, x, y });
-  };
-  const hideTooltip = () => setTooltip((t) => ({ ...t, visible: false }));
-
-  const kpiCalculationRef = useRef(null);
-  const kpiBenchmarkingRef = useRef(null);
-  const maturityAssessmentRef = useRef(null);
-  const peerFinancialRef = useRef(null);
-  const recommendationsRef = useRef(null);
-  const businessCaseRef = useRef(null);
-
-  const tabRefs = {
-    "KPI-calculation": kpiCalculationRef,
-    "kpi-benchmarking": kpiBenchmarkingRef,
-    "maturity-assessment": maturityAssessmentRef,
-    "peer-financial-analysis": peerFinancialRef,
-    recommendations: recommendationsRef,
-    "business-case": businessCaseRef,
-  };
-  const downloadableTabs = Object.keys(tabRefs);
-
-  // ✅ PAGE-SPECIFIC API CALLS - ONLY 1 CALL PER PAGE!
-  const isKpiCalcActive = selectedTab === "KPI-calculation";
-
-  // ✅ Base KPI Calculation (runs first on KPI tab with base filters)
-  const shouldCallBaseKpiCalc = isKpiCalcActive && currentPage === 1;
-
-  const kpiCalcArgs = {
-    month: baseMonth,
-    channel: baseChannel,
-    productH1: baseProductH1,
-    brandH2: baseBrandH2,
-  };
-
-  const {
-    data: kpiCalcData,
-    isLoading: kpiCalcLoading,
-    isFetching: kpiCalcFetching,
-    error: kpiCalcError,
-  } = useGetKpiCalculationQuery(kpiCalcArgs, {
-    skip: !shouldCallBaseKpiCalc,
-  });
-
-  // ✅ This flag controls other KPI calls (Waterfall, Trendline, dropdowns)
-  const isKpiBaseReady = !!kpiCalcData && !kpiCalcLoading && !kpiCalcError;
-
-  // Heatmap data is derived from kpiCalcData (no separate API call)
-  const heatmapResponse = kpiCalcData?.heatmap || {};
-  const heatmapApiLoading = kpiCalcLoading;
-  const heatmapApiError = kpiCalcError;
-
-  // ✅ Trendline (Page 1 only)
-  const isTrendlinePage = isKpiCalcActive && currentPage === 1;
-  const trendlineArgs = {
-    month: selectedMonth.length ? selectedMonth : ["Overall"],
-    channel: selectedChannel.length ? selectedChannel : ["Overall"],
-    productH1: selectedProductLevel1.length ? selectedProductLevel1 : ["Overall"],
-    brandH2: selectedBrand.length ? selectedBrand : ["Overall"],
-  };
-  const {
-    data: trendlineData,
-    isLoading: trendlineLoading,
-    isFetching: trendlineFetching,
-    error: trendlineError,
-  } = useGetKpiTrendlineDataQuery(trendlineArgs, {
-    skip: !isTrendlinePage || !isKpiBaseReady,
-  });
-
-  // ✅ Waterfall (Page 2 only)
-  const isWaterfallPage = isKpiCalcActive && currentPage === 2;
-  const waterfallArgs = {
-    month: selectedMonth.length ? selectedMonth : ["Overall"],
-    channel: selectedChannel.length ? selectedChannel : ["Overall"],
-    productH1: selectedProductLevel1.length ? selectedProductLevel1 : ["Overall"],
-    brandH2: selectedBrand.length ? selectedBrand : ["Overall"],
-  };
-  const {
-    data: waterfallData,
-    isLoading: waterfallLoading,
-    isFetching: waterfallFetching,
-    error: waterfallError,
-  } = useGetKpiWaterfallDataQuery(waterfallArgs, {
-    skip: !isWaterfallPage || !isKpiBaseReady,
-  });
-
-  // ✅ Cascading dropdowns via RTK Query
-  const {
-    data: monthApiOptions = [],
-    isLoading: monthsLoading,
-    isFetching: monthsFetching,
-    error: monthsError,
-  } = useGetKpiMonthsQuery(undefined, {
-    skip: !isKpiCalcActive || !isKpiBaseReady,
-  });
-
-  const {
-    data: channelApiOptions = [],
-    isLoading: channelsLoading,
-    isFetching: channelsFetching,
-    error: channelsError,
-  } = useGetKpiChannelsQuery(
-    { month: selectedMonth },
-    { skip: !isKpiCalcActive || !isKpiBaseReady }
-  );
-
-  const {
-    data: productH1ApiOptions = [],
-    isLoading: productH1Loading,
-    isFetching: productH1Fetching,
-    error: productH1Error,
-  } = useGetKpiProductH1sQuery(
-    { month: selectedMonth, channel: selectedChannel },
-    { skip: !isKpiCalcActive || !isKpiBaseReady }
-  );
-
-  const {
-    data: brandH2ApiOptions = [],
-    isLoading: brandH2Loading,
-    isFetching: brandH2Fetching,
-    error: brandH2Error,
-  } = useGetKpiBrandH2sQuery(
-    { month: selectedMonth, channel: selectedChannel, productH1: selectedProductLevel1 },
-    { skip: !isKpiCalcActive || !isKpiBaseReady }
-  );
-
-  const monthOptions = useMemo(
-    () => ["Overall", ...monthApiOptions],
-    [monthApiOptions]
-  );
-  const channelOptions = useMemo(
-    () => ["Overall", ...channelApiOptions],
-    [channelApiOptions]
-  );
-  const productH1Options = useMemo(
-    () => ["Overall", ...productH1ApiOptions],
-    [productH1ApiOptions]
-  );
-  const brandH2Options = useMemo(
-    () => ["Overall", ...brandH2ApiOptions],
-    [brandH2ApiOptions]
-  );
-
-  const dropdownLoading =
-    monthsLoading || channelsLoading || productH1Loading || brandH2Loading;
-
-  // ✅ KPI Benchmarking Tab (two screens)
-  const isBenchActive = selectedTab === "kpi-benchmarking";
-  const benchTwoPayload = useMemo(() => {
-    if (!isBenchActive) return {};
-    const urlParams = new URLSearchParams(location.search);
-    const p = Object.fromEntries(urlParams.entries());
-    const { tab, ...payload } = p;
-    return payload;
-  }, [location.search, isBenchActive]);
-
-  const { screen1: benchOne, screen2: benchTwo } = useKPIBenchmarkingTab(
-    isBenchActive,
-    benchTwoPayload
-  );
-
-  const {
-    data: benchmarkingOne,
-    isLoading: benchOneLoading,
-    isFetching: benchOneFetching,
-    error: benchOneError,
-  } = benchOne;
-
-  const {
-    data: benchmarkingTwo,
-    isLoading: benchTwoLoading,
-    isFetching: benchTwoFetching,
-    error: benchTwoError,
-  } = benchTwo;
-
-  const isMaturityActive = selectedTab === "maturity-assessment";
-  const {
-    data: maturityData,
-    isLoading: maturityLoading,
-    isFetching: maturityFetching,
-    error: maturityError,
-  } = useGetMaturityAssessmentQuery(undefined, { skip: !isMaturityActive });
-
-  const isPeerActive = selectedTab === "peer-financial-analysis";
-
-  const {
-    data: peerFinancialData,
-    isLoading: peerLoading,
-    isFetching: peerFetching,
-    error: peerError,
-  } = useGetFinancialAnalysisQuery(isPeerActive ? undefined : skipToken);
-
-  const isRecActive = selectedTab === "recommendations";
-  const {
-    data: recRawData,
-    isLoading: recLoading,
-    isFetching: recFetching,
-    error: recError,
-  } = useGetRecommendationsQuery(undefined, { skip: !isRecActive });
-
-  let recommendationsData = [];
-  if (Array.isArray(recRawData?.recommendations)) {
-    recommendationsData = recRawData.recommendations;
-  } else if (Array.isArray(recRawData?.content)) {
-    recommendationsData = recRawData.content;
-  } else if (Array.isArray(recRawData)) {
-    recommendationsData = recRawData;
-  } else {
-    recommendationsData = [];
-  }
-
-  const isBizActive = selectedTab === "business-case";
-  const {
-    data: bizRawData,
-    isLoading: bizLoading,
-    isFetching: bizFetching,
-    error: bizError,
-  } = useGetBusinessCaseQuery(undefined, { skip: !isBizActive });
-  const businessCaseData = bizRawData?.business_case_data ?? [];
-  const overallPotentialSavings = bizRawData?.overallPotentialSavings ?? null;
-  const npvDataString = bizRawData?.npvDataString ?? null;
-
-  const isExecActive = selectedTab === "executive-summary";
-  const {
-    data: execSummaryData,
-    isLoading: execLoading,
-    isFetching: execFetching,
-    error: execError,
-  } = useGetExecutiveSummaryQuery(undefined, { skip: !isExecActive });
-
-  // ✅ useEffects
-  useEffect(() => {
-    setVisitedTabs((prev) => new Set([...prev, selectedTab]));
-  }, [selectedTab]);
-
-  useEffect(() => {
-    if (isKpiCalcActive) {
-      setSelectedMonth(["Overall"]);
-      setSelectedChannel(["Overall"]);
-      setSelectedProductLevel1(["Overall"]);
-      setSelectedBrand(["Overall"]);
-
-      setBaseMonth(["Overall"]);
-      setBaseChannel(["Overall"]);
-      setBaseProductH1(["Overall"]);
-      setBaseBrandH2(["Overall"]);
-    }
-  }, [selectedTab, currentPage, isKpiCalcActive]);
-
-  useEffect(() => {
-    if (currentPage === 2 && isKpiCalcActive) {
-      setTrendChannel(
-        selectedChannel[0] === "Overall" ? "All" : selectedChannel[0]
-      );
-      setTrendProductH1(
-        selectedProductLevel1[0] === "Overall"
-          ? "All"
-          : selectedProductLevel1[0]
-      );
-      setTrendBrand(selectedBrand[0] === "Overall" ? "All" : selectedBrand[0]);
-    }
-  }, [
-    currentPage,
-    selectedTab,
-    selectedChannel,
-    selectedProductLevel1,
-    selectedBrand,
-    isKpiCalcActive,
-  ]);
-
-  useEffect(() => {
-    if (selectedTab === "recommendations") setAssessmentType("Plan");
-  }, [selectedTab]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-    setSelectedKPIs([]);
-    setSelectedFunction("");
-    setChannelFilter("All");
-    setProductH1Filter("All");
-    setBrandH2Filter("All");
-    setHeatmapGranularity(GRANULARITIES[0].value);
-    if (selectedTab !== "maturity-assessment") {
-      setSurveyResponseFile(null);
-      setRoleDeptFile(null);
-      setSheetNames([]);
-    }
-  }, [selectedTab]);
-
-  useEffect(() => {
-    if (!unlockedTabs.includes(selectedTab)) {
-      const lastUnlocked =
-        unlockedTabs[unlockedTabs.length - 1] || "Templates";
-      if (lastUnlocked !== selectedTab) {
-        navigate(`?tab=${lastUnlocked}`, { replace: true });
+      let accessToken = "";
+      if (typeof getAccessToken === "function") {
+        accessToken = await getAccessToken();
       }
-    }
-  }, [selectedTab, unlockedTabs, navigate]);
 
-  // ──────────────────────────────  HEATMAP LOGIC  ────────────────────────────────────
-  const { columns, filteredHeatmapData } = useMemo(() => {
-    const data = (() => {
-      if (
-        selectedTab === "maturity-assessment" &&
-        maturityData?.l1l2CapabilityTracking
-      ) {
-        const mappedType =
-          ASSESSMENT_TYPE_MAPPING[assessmentType] || assessmentType;
-        return maturityData.l1l2CapabilityTracking.filter(
-          (item) => item.Assessment === mappedType
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        },
+        credentials: "include", // Include cookies for authentication
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.detail || `HTTP error! status: ${response.status}`
         );
       }
-      return [];
-    })();
 
-    if (!data.length) return { columns: [], filteredHeatmapData: [] };
+      const data = await response.json();
+      const processedData = data.data || null;
 
-    const grouped = {};
-    data.forEach((row) => {
-      const col = row["Level 1 Category"];
-      if (!grouped[col]) grouped[col] = [];
-      grouped[col].push({
-        name: row["Level 2 Category"] ?? "",
-        score:
-          typeof row["l2_current_state"] === "number"
-            ? row["l2_current_state"]
-            : null,
-      });
-    });
-
-    const columnNames = Object.keys(grouped);
-    const maxRows = Math.max(...columnNames.map((col) => grouped[col].length));
-    const structuredRows = Array.from({ length: maxRows }, (_, i) =>
-      Object.fromEntries(
-        columnNames.map((col) => [
-          col,
-          grouped[col][i] || { name: "", score: null },
-        ])
-      )
-    );
-
-    return { columns: columnNames, filteredHeatmapData: structuredRows };
-  }, [selectedTab, maturityData, assessmentType]);
-
-  // ──────────────────────────────  UTILS  ─────────────────────────────────────
-
-  const handleKPIChange = ({ kpi, function: func }) => {
-    if (Array.isArray(kpi)) setSelectedKPIs(kpi);
-    else setSelectedKPI(kpi || "");
-    setSelectedFunction(func || "");
-  };
-
-  const handleMarkAsDownload = async (tabKey) => {
-    const ref = tabRefs[tabKey];
-    if (!ref?.current) return;
-    const canvas = await html2canvas(ref.current, {
-      useCORS: true,
-      backgroundColor: "#fff",
-    });
-    const imgData = canvas.toDataURL("image/png");
-    setDownloadedScreenshots((prev) => ({ ...prev, [tabKey]: imgData }));
-    alert("Tab content marked for download.");
-  };
-
-  const handleDownloadPdfClick = () => {
-    const doc = new jsPDF("p", "mm", "a4");
-    const tabOrder = downloadableTabs;
-    let added = false;
-    tabOrder.forEach((key) => {
-      if (downloadedScreenshots[key]) {
-        if (added) doc.addPage();
-        doc.addImage(downloadedScreenshots[key], "PNG", 10, 10, 190, 277);
-        added = true;
-      }
-    });
-    if (!added) {
-      alert("No tabs have been marked for download yet!");
-      return;
-    }
-    doc.save("Detailed_Report.pdf");
-  };
-
-  const tabConfig = getTabConfig({
-    state: {
-      assessmentType,
-      selectedKPI,
-      selectedKPIs,
-      selectedFunction,
-      surveyResponseFile,
-      roleDeptFile,
-
-      sheetNames,
-      selectedSheet,
-      setSelectedSheet,
-      handleSurveyResponseUpload: (e) =>
-        setSurveyResponseFile(e.target.files[0]),
-      waterfallData,
-      waterfallLoading,
-      monthOptions,
-      channelOptions,
-      productH1Options,
-      brandH2Options,
-      channelFilter,
-      setChannelFilter,
-      productH1Filter,
-      setProductH1Filter,
-      brandH2Filter,
-      setBrandH2Filter,
-      selectedMonth,
-      setSelectedMonth,
-      selectedChannel,
-      setSelectedChannel,
-      selectedProductLevel1,
-      setSelectedProductLevel1,
-      selectedBrand,
-      setSelectedBrand,
-      heatmapGranularity,
-      setHeatmapGranularity,
-      heatmapData: heatmapResponse,
-      heatmapLoading: heatmapApiLoading,
-      heatmapError: heatmapApiError,
-      l1CapabilityTracking: maturityData?.l1CapabilityTracking,
-      l1l2CapabilityTracking: maturityData?.l1l2CapabilityTracking,
-      recommendations: maturityData?.recommendations,
-      columns,
-      filteredHeatmapData,
-      peerFinancialData,
-      downloadedScreenshots,
-      businessCaseData,
-      overallPotentialSavings,
-      npvDataString,
-      GRANULARITIES,
-      ASSESSMENT_TYPE_MAPPING,
-      recommendationsData,
-      benchmarkingData: { benchmarkingOne, benchmarkingTwo },
-      execSummaryData,
-      execLoading,
-      execError,
-      trendlineData,
-      trendlineLoading,
-      trendlineError,
-      trendChannel,
-      setTrendChannel,
-      trendProductH1,
-      setTrendProductH1,
-      trendBrand,
-      setTrendBrand,
-    },
-    handlers: {
-      handleKPIChange,
-      handleAssessmentChange: setAssessmentType,
-    },
-    meta: { showTooltip, hideTooltip, tooltip },
-    user,
-  });
-
-  const { tabContent, tabPages, tabMeta } = tabConfig;
-  const totalPages = tabPages[selectedTab] || 1;
-
-  useEffect(() => window.scrollTo(0, 0), [selectedTab, currentPage]);
-
-  // ✅ Sequential Save & Continue: when finishing a tab, unlock ONLY the next tab
-  const handleSaveContinue = () => {
-    if (currentPage === totalPages) {
-      const tabs = Object.keys(tabPages);
-      const currentIndex = tabs.indexOf(selectedTab);
-
-      const nextIndex = currentIndex + 1;
-      if (nextIndex < tabs.length) {
-        const nextTab = tabs[nextIndex];
-
-        if (!unlockedTabs.includes(nextTab)) {
-          dispatch(unlockTab(nextTab));
+      if (processedData) {
+        if (!processedData.cogs_json || processedData.cogs_json.length === 0) {
+          // TODO: Handle empty COGS data
         }
-        navigate(`?tab=${nextTab}`);
+        if (!processedData.sga_json || processedData.sga_json.length === 0) {
+          // TODO: Handle empty SGA data
+        }
+        if (!processedData.inv_json || processedData.inv_json.length === 0) {
+          // TODO: Handle empty INV data
+        }
       } else {
-        navigate(`?tab=${tabs[currentIndex]}`);
+        // TODO: Handle no processed data
       }
-    } else {
-      setCurrentPage(currentPage + 1);
+
+      setFinancialData(processedData);
+    } catch (err) {
+      setError(err.message || "An error occurred while fetching analysis.");
+    } finally {
+      setLoading(false);
     }
+  }, [getAccessToken]); // ✅ Fixed: Removed unused 'user' dependency
+
+  const clearData = useCallback(() => {
+    setFinancialData(null);
+    setError(null);
+  }, []);
+
+  return {
+    financialData,
+    loading,
+    error,
+    fetchAnalysis,
+    clearData,
   };
+};
 
-  const capitalizeFirstLetter = (str) =>
-    str
-      .replace(/-/g, " ")
-      .split(" ")
-      .map((word) =>
-        word.toUpperCase() === "KPI"
-          ? "KPI"
-          : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-      )
-      .join(" ");
+export default useFinancialAnalysis;
 
-  const renderTabContent = () => {
-    const dropdownFetching =
-      monthsFetching || channelsFetching || productH1Fetching || brandH2Fetching;
-
-    const hasPeerFinancialData = !!peerFinancialData; // ✅ use cache presence
-
-    const loading =
-      kpiCalcLoading ||
-      kpiCalcFetching ||
-      waterfallLoading ||
-      waterfallFetching ||
-      trendlineLoading ||
-      trendlineFetching ||
-      heatmapApiLoading ||
-      benchOneLoading ||
-      benchOneFetching ||
-      benchTwoLoading ||
-      benchTwoFetching ||
-      maturityLoading ||
-      maturityFetching ||
-      (!hasPeerFinancialData && (peerLoading || peerFetching)) || // ✅ only gate when no cache
-      recLoading ||
-      recFetching ||
-      bizLoading ||
-      bizFetching ||
-      execLoading ||
-      execFetching ||
-      dropdownLoading ||
-      dropdownFetching;
-
-    const error =
-      kpiCalcError ||
-      waterfallError ||
-      trendlineError ||
-      heatmapApiError ||
-      benchOneError ||
-      benchTwoError ||
-      maturityError ||
-      peerError ||
-      recError ||
-      bizError ||
-      execError ||
-      monthsError ||
-      channelsError ||
-      productH1Error ||
-      brandH2Error;
-
-    if (loading) {
-      return (
-        <div
-          className="loader-container"
-          style={{ textAlign: "center", marginTop: "50px" }}
-        >
-          <Loader />
-        </div>
-      );
-    }
-
-    if (error) {
-      return (
-        <div className="alert alert-danger">
-          Error loading data:{" "}
-          {typeof error === "object" ? JSON.stringify(error) : error}.
-          <button
-            onClick={() => navigate(`?tab=${selectedTab}`)}
-            className="btn btn-sm btn-secondary ms-2"
-            type="button"
-          >
-            Retry
-          </button>
-        </div>
-      );
-    }
-
-    const currentTabMeta = tabMeta?.[selectedTab] || {};
-    const hideBackButton = currentTabMeta.hideBackButton === true;
-    const requireFiles = currentTabMeta.requireUploadedFiles === true;
-    const disableSaveOnThisTab =
-      selectedTab === "Templates" && requireFiles && !hasTemplateFiles;
-
-    return (
-      <>
-        <div
-          className="tab-heading"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: "15px"
-          }}
-        >
-          {capitalizeFirstLetter(selectedTab.replace(/-/g, " "))}
-          {downloadableTabs.includes(selectedTab) && (
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <button
-                onClick={() => handleMarkAsDownload(selectedTab)}
-                className="btn btn-primary"
-                disabled={!!downloadedScreenshots[selectedTab]}
-                onMouseEnter={(e) =>
-                  showTooltip(
-                    e,
-                    downloadedScreenshots[selectedTab]
-                      ? "Tab already marked"
-                      : "Mark this tab for PDF export"
-                  )
-                }
-                onMouseLeave={hideTooltip}
-                style={
-                  downloadedScreenshots[selectedTab] ? { opacity: 0.65 } : {}
-                }
-                type="button"
-              >
-                {downloadedScreenshots[selectedTab] ? "Marked" : "Mark as Download"}
-              </button>
-              {selectedTab === "executive-summary" && (
-                <button
-                  onClick={handleDownloadPdfClick}
-                  className="btn btn-success"
-                  style={{ marginLeft: 8 }}
-                  type="button"
-                >
-                  Download Detailed Report (PDF)
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="page-content">
-          {tabContent[selectedTab]?.[currentPage - 1] ? (
-            <div className="container mt-4 px-0">
-              {downloadableTabs.includes(selectedTab) ? (
-                <div ref={tabRefs[selectedTab]}>
-                  {tabContent[selectedTab][currentPage - 1].title && (
-                    <h3>{tabContent[selectedTab][currentPage - 1].title}</h3>
-                  )}
-                  <div>
-                    {tabContent[selectedTab][currentPage - 1].description}
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {tabContent[selectedTab][currentPage - 1].title && (
-                    <h3>{tabContent[selectedTab][currentPage - 1].title}</h3>
-                  )}
-                  <div>
-                    {tabContent[selectedTab][currentPage - 1].description}
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className="alert alert-info">
-              No content available for this tab.
-            </div>
-          )}
-        </div>
-
-        <div className="pagination-controls">
-          {/* Left side: Back (hidden on Templates) */}
-          <div className="pagination-left">
-            {!hideBackButton && (
-              <button
-                onClick={() => {
-                  if (currentPage === 1) {
-                    const tabs = Object.keys(tabPages);
-                    const prevIndex =
-                      (tabs.indexOf(selectedTab) - 1 + tabs.length) % tabs.length;
-                    navigate(`?tab=${tabs[prevIndex]}`);
-                  } else {
-                    setCurrentPage(currentPage - 1);
-                  }
-                }}
-                className="btn back-button"
-                type="button"
-              >
-                Back
-              </button>
-            )}
-          </div>
-
-          {/* Right side: Save & Continue */}
-          <div className="pagination-right">
-            {currentPage === totalPages ? (
-              <button
-                onClick={handleSaveContinue}
-                className="btn save-button"
-                type="button"
-                disabled={disableSaveOnThisTab}
-                title={
-                  disableSaveOnThisTab
-                    ? "Upload at least one template before continuing."
-                    : ""
-                }
-              >
-                Save &amp; Continue
-              </button>
-            ) : (
-              <button
-                onClick={() => setCurrentPage(currentPage + 1)}
-                className="btn save-button"
-                type="button"
-                disabled={disableSaveOnThisTab}
-                title={
-                  disableSaveOnThisTab
-                    ? "Upload at least one template before continuing."
-                    : ""
-                }
-              >
-                Save &amp; Continue
-              </button>
-            )}
-          </div>
-        </div>
-
-        {tooltip.visible && (
-          <div
-            className="custom-tooltip"
-            style={{
-              position: "absolute",
-              left: tooltip.x,
-              top: tooltip.y,
-              zIndex: 9999,
-              background: "#222",
-              color: "#fff",
-              padding: "8px 14px",
-              borderRadius: 8,
-              fontSize: 14,
-              maxWidth: 260,
-            }}
-          >
-            {tooltip.message}
-          </div>
-        )}
-      </>
-    );
-  };
-
-    return (
-    <div className="assessment-launcher">
-      <div className="view-assessment-container container p-0 overflow-hidden">
-        {/* Added d-flex wrapper here instead of mixing row and container */}
-        <div className="d-flex flex-column flex-lg-row w-100">
-          
-          <div className="tabs view-assessment-tabs col-12 col-lg-3">
-            {Object.keys(tabPages).map((tab) => {
-              const isUnlocked = unlockedTabs.includes(tab);
-              const isActive = selectedTab === tab;
-              const isVisited = visitedTabs.has(tab) && selectedTab !== tab;
-
-              return (
-                <button
-                  key={tab}
-                  className={`tab
-                  ${isActive ? "active" : ""}
-                  ${isVisited ? "focus" : ""}
-                  ${!isUnlocked ? "tab-disabled" : ""}`.replace(/\s+/g, " ")}
-                  onClick={() => {
-                    if (!isUnlocked) return;
-                    navigate(`?tab=${tab}`);
-                  }}
-                  disabled={!isUnlocked}
-                  title={
-                    isUnlocked
-                      ? ""
-                      : "Complete previous steps before accessing this tab."
-                  }
-                  type="button"
-                >
-                  {capitalizeFirstLetter(tab.replace(/-/g, " "))}
-                </button>
-              );
-            })}
-          </div>
-          
-          <div className="tab-content col-12 col-lg-9">
-            {renderTabContent()}
-          </div>
-          
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default ViewAssessment;
 --
+
+// src/hooks/usePeerFinancialData.js
+import { useState, useEffect } from "react";
+import cogsJson from "../components/data/cogs.json"; // Local file
+
+const usePeerFinancialData = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      // First try local import
+      try {
+        if (
+          !cogsJson ||
+          typeof cogsJson !== "object" ||
+          !cogsJson.companies ||
+          !Array.isArray(cogsJson.companies)
+        ) {
+          throw new Error(
+            "Invalid local data format: expected object with companies array"
+          );
+        }
+        setData(cogsJson);
+        setLoading(false);
+      } catch (localError) {
+
+        // Fallback to fetching from backend
+        try {
+          const response = await fetch(
+            `${process.env.REACT_APP_API_URL}/cogschart`
+          );
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const json = await response.json();
+          // Validate expected structure
+          if (!json.companies || !Array.isArray(json.companies)) {
+            throw new Error(
+              "Invalid fetched format: expected object with companies array"
+            );
+          }
+          setData(json);
+          setLoading(false);
+        } catch (fetchError) {
+      
+          setError(fetchError.message);
+          setLoading(false);
+        }
+      }
+    };
+
+    loadData();
+  }, []);
+
+  return { data, loading, error };
+};
+
+export default usePeerFinancialData;
+
+--
+
+  import { useState, useEffect } from "react";
+import heatmapJson from "../components/data/l2_capability_tracking.json";
+
+const useHeatmapData = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      // First try local import
+      try {
+        const localData = heatmapJson.capabilities || heatmapJson;
+        if (!Array.isArray(localData)) {
+          throw new Error("Invalid local data format: expected an array");
+        }
+        setData(localData);
+        setLoading(false);
+      } catch (localError) {
+  
+        // If local loading fails, fallback to fetching from backend
+        try {
+          const response = await fetch(
+            `${process.env.REACT_APP_API_URL}/heatmap`
+          );
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const json = await response.json();
+          const fetchedData = json.capabilities || json;
+          if (!Array.isArray(fetchedData)) {
+            throw new Error("Invalid fetched data format: expected an array");
+          }
+          setData(fetchedData);
+          setLoading(false);
+        } catch (fetchError) {
    
+          setError(fetchError.message);
+          setLoading(false);
+        }
+      }
+    };
+
+    loadData();
+  }, []);
+
+  return { data, loading, error };
+};
+
+export default useHeatmapData;
+
+--
+  
+  // src/components/usecontext/UserContext.js
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import { useMsal } from "@azure/msal-react";
+import { protectedResources } from "../../authConfig";
+import { useDispatch } from "react-redux";
+import { kpiApi, setTokenGetter } from "../../services/kpiApi";
+import { EventType } from "@azure/msal-browser";
+
+const UserContext = createContext();
+
+export const UserProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [msalReady, setMsalReady] = useState(false);
+  const [tokenGetterReady, setTokenGetterReady] = useState(false);
+  const navigate = useNavigate();
+  const { instance } = useMsal();
+  const dispatch = useDispatch();
+
+  // 1️⃣ Initialize MSAL on mount
+  useEffect(() => {
+    const initializeMsal = async () => {
+      try {
+        if (instance.initialize) {
+          await instance.initialize();
+        }
+        setMsalReady(true);
+      } catch (err) {
+        setMsalReady(false);
+      }
+    };
+    initializeMsal();
+  }, [instance]);
+
+  // 2️⃣ Token getter (useCallback)
+  const getAccessToken = useCallback(async () => {
+    try {
+      const account = instance.getActiveAccount();
+      if (!account) {
+        return "";
+      }
+      const scopes = protectedResources.customApi.scopes;
+      const tokenResponse = await instance.acquireTokenSilent({ account, scopes });
+      return tokenResponse.accessToken;
+    } catch (error) {
+      // Try interactive popup
+      try {
+        const tokenResponse = await instance.acquireTokenPopup({
+          scopes: protectedResources.customApi.scopes,
+        });
+        return tokenResponse.accessToken;
+      } catch (interactiveError) {
+        return "";
+      }
+    }
+  }, [instance]);
+
+  // 3️⃣ Refresh user (useCallback)
+  const refreshUser = useCallback(async () => {
+    setLoading(true);
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      let msalAccount = null;
+      try {
+        msalAccount = instance.getActiveAccount();
+      } catch {
+        msalAccount = null;
+      }
+
+      const resp = await fetch(`${process.env.REACT_APP_API_URL}/me`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        credentials: "include",
+      });
+
+      let data = {};
+      if (resp.status === 200) {
+        data = await resp.json();
+      }
+
+      setUser({
+        ...data,
+        name:
+          data.name ||
+          (msalAccount && (msalAccount.name || msalAccount.username || msalAccount.email)) ||
+          data.username ||
+          data.email ||
+          "User",
+        email: data.email || (msalAccount && msalAccount.username) || null,
+      });
+
+    } catch (err) {
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [getAccessToken, instance]);
+
+  // 4️⃣ Logout (useCallback)
+  const logout = useCallback(
+    async (redirectPath = "/logout") => {
+      try {
+        dispatch(kpiApi.util.resetApiState());
+        try {
+          await fetch(`${process.env.REACT_APP_API_URL}/logout`, {
+            method: "GET",
+            credentials: "include",
+          });
+        } catch (logoutError) {
+          // Backend logout fail
+        }
+
+        setUser(null);
+        navigate(redirectPath);
+      } catch (err) {
+        setUser(null);
+        navigate(redirectPath);
+      }
+    },
+    [dispatch, navigate]
+  );
+
+  // 5️⃣ Login (useCallback)
+  const login = useCallback(() => {
+    instance.loginRedirect({ redirectUri: "/" });
+  }, [instance]);
+
+  // 6️⃣ Context value (useMemo)
+  const contextValue = useMemo(
+    () => ({
+      user,
+      loading,
+      refreshUser,
+      login,
+      logout,
+      isAuthenticated: !!user,
+      getAccessToken,
+      tokenGetterReady,
+    }),
+    [user, loading, refreshUser, login, logout, getAccessToken, tokenGetterReady]
+  );
+
+  // 7️⃣ Register token getter with RTK Query
+  useEffect(() => {
+    if (msalReady && getAccessToken) {
+      setTokenGetter(getAccessToken);
+      setTokenGetterReady(true);
+    }
+  }, [msalReady, getAccessToken]);
+
+  // 8️⃣ Refresh user on mount
+  useEffect(() => {
+    if (msalReady) {
+      refreshUser();
+    }
+  }, [refreshUser, msalReady]);
+
+  // 9️⃣ MSAL event sync (THIS IS THE IMPORTANT FIX)
+  useEffect(() => {
+    if (!instance) return;
+    const callbackId = instance.addEventCallback((event) => {
+      if (event.eventType === EventType.LOGIN_SUCCESS && event.payload?.account) {
+        instance.setActiveAccount(event.payload.account);
+        refreshUser(); // Auto-update context
+      }
+      if (event.eventType === EventType.LOGOUT_SUCCESS) {
+        setUser(null);
+      }
+    });
+    return () => {
+      if (callbackId) instance.removeEventCallback(callbackId);
+    };
+  }, [instance, refreshUser]);
+
+  // 10️⃣ Prevent rendering until ready
+  if (!msalReady || !tokenGetterReady) {
+    return <div>Initializing authentication...</div>;
+  }
+
+  // 11️⃣ Provide context
+  return (
+    <UserContext.Provider value={contextValue}>
+      {children}
+    </UserContext.Provider>
+  );
+};
+
+// Hook export
+export const useUser = () => {
+  const context = useContext(UserContext);
+  if (!context) {
+    throw new Error("useUser must be used within a UserProvider");
+  }
+  return context;
+};
+
+-
+
 /* eslint-disable no-console */
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { REHYDRATE } from "redux-persist";
@@ -1745,3 +1439,4 @@ export const {
   useDeleteAllChatHistoryMutation,   // ← NEW export
   useSendChatMessageMutation,
 } = kpiApi;
+
