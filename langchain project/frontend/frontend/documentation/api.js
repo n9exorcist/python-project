@@ -1,17 +1,28 @@
-// services/api.js
-//
-// CWE-918 fix: API_BASE is now validated through getSafeApiUrl() before any
-// fetch call is made. The original code built API_BASE by directly
-// concatenating two env vars without validation:
-//
-//   const API_BASE =
-//     process.env.REACT_APP_API_BASE_URL || `${process.env.REACT_APP_API_URL}/api`;
-//
-// An attacker who can pollute REACT_APP_API_BASE_URL (e.g. via a CI/CD
-// misconfiguration or a poisoned .env file) could redirect all fetch calls to
-// an arbitrary host. getSafeApiUrl() asserts the scheme and origin against an
-// allow-list once at module load time.
+// Replace your existing services/api.js with this secure implementation
+
 import { SAFE_API_BASE } from "../utils/apiUrlValidator";
+
+/**
+ * Asserts that the URL belongs strictly to our validated safe API base
+ * to prevent SSRF path deviations or external protocol hijacking.
+ */
+const enforceTrustedUrl = (targetUrl) => {
+  const absoluteBase = new URL(
+    SAFE_API_BASE,
+    window.location.origin,
+  ).toString();
+  const fullyQualifiedTarget = new URL(
+    targetUrl,
+    window.location.origin,
+  ).toString();
+
+  if (!fullyQualifiedTarget.startsWith(absoluteBase)) {
+    throw new Error(
+      "Security Violation: Target outbound URL destination is untrusted.",
+    );
+  }
+  return targetUrl;
+};
 
 const handleResponse = async (response) => {
   if (!response.ok) {
@@ -22,17 +33,15 @@ const handleResponse = async (response) => {
 };
 
 export const apiService = {
-  // CWE-918 fix: SAFE_API_BASE replaces the raw API_BASE variable.
-  // The year parameter is validated to be a 4-digit number string to prevent
-  // path-traversal injection into the URL.
   getOTIFData: async (year = "2024") => {
-    // Validate year: only accept a 4-digit numeric string
+    // Validate year: strictly accept a 4-digit numeric string
     const safeYear = /^\d{4}$/.test(String(year)) ? String(year) : "2024";
 
-    const response = await fetch(`${SAFE_API_BASE}/${safeYear}`);
+    // Explicitly clamp and validate url target string
+    const targetUrl = enforceTrustedUrl(`${SAFE_API_BASE}/${safeYear}`);
+    const response = await fetch(targetUrl);
     const jsonData = await handleResponse(response);
 
-    // Transform data here instead of in the component
     const transformedData = {};
     Object.keys(jsonData).forEach((month) => {
       transformedData[month] = {
@@ -45,11 +54,11 @@ export const apiService = {
   },
 
   getCapabilities: async () => {
-    const response = await fetch(`${SAFE_API_BASE}/capabilities`);
+    const targetUrl = enforceTrustedUrl(`${SAFE_API_BASE}/capabilities`);
+    const response = await fetch(targetUrl);
     return handleResponse(response);
   },
 
-  // Add caching layer
   getCachedOTIFData: (() => {
     let cache = null;
     return async (year) => {
