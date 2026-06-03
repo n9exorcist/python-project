@@ -50,12 +50,7 @@ const ALLOWED_TABS = new Set([
 ]);
 // FIX #4 — Bench param allowlist (CWE-20 Server-Side Parameter Pollution).
 // Only these keys are forwarded from URL params to the API hook payload.
-const ALLOWED_BENCH_PARAMS = new Set([
-  "month",
-  "channel",
-  "productH1",
-  "brandH2",
-]);
+const ALLOWED_BENCH_PARAMS = new Set(["month", "channel", "productH1", "brandH2"]);
 
 const GRANULARITIES = [
   { label: "Product", value: "product_heirarchy_1-classification" },
@@ -118,9 +113,7 @@ function ViewAssessment({ user }) {
   // Interactive filters used by dropdowns + waterfall + trendline
   const [selectedMonth, setSelectedMonth] = useState(["Overall"]);
   const [selectedChannel, setSelectedChannel] = useState(["Overall"]);
-  const [selectedProductLevel1, setSelectedProductLevel1] = useState([
-    "Overall",
-  ]);
+  const [selectedProductLevel1, setSelectedProductLevel1] = useState(["Overall"]);
   const [selectedBrand, setSelectedBrand] = useState(["Overall"]);
   // Base filters used ONLY for /kpi-calculation (never changed on user filter interaction)
   const [baseMonth, setBaseMonth] = useState(["Overall"]);
@@ -140,12 +133,7 @@ function ViewAssessment({ user }) {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 4000);
   };
-  const [tooltip, setTooltip] = useState({
-    visible: false,
-    message: "",
-    x: 0,
-    y: 0,
-  });
+  const [tooltip, setTooltip] = useState({ visible: false, message: "", x: 0, y: 0 });
   // FIX #7 — Clamp tooltip on both X and Y axes.
   // Unclamped Y coordinate allowed off-screen positioning via crafted events.
   const showTooltip = (e, message) => {
@@ -210,9 +198,7 @@ function ViewAssessment({ user }) {
   const trendlineArgs = {
     month: selectedMonth.length ? selectedMonth : ["Overall"],
     channel: selectedChannel.length ? selectedChannel : ["Overall"],
-    productH1: selectedProductLevel1.length
-      ? selectedProductLevel1
-      : ["Overall"],
+    productH1: selectedProductLevel1.length ? selectedProductLevel1 : ["Overall"],
     brandH2: selectedBrand.length ? selectedBrand : ["Overall"],
   };
   const {
@@ -228,9 +214,7 @@ function ViewAssessment({ user }) {
   const waterfallArgs = {
     month: selectedMonth.length ? selectedMonth : ["Overall"],
     channel: selectedChannel.length ? selectedChannel : ["Overall"],
-    productH1: selectedProductLevel1.length
-      ? selectedProductLevel1
-      : ["Overall"],
+    productH1: selectedProductLevel1.length ? selectedProductLevel1 : ["Overall"],
     brandH2: selectedBrand.length ? selectedBrand : ["Overall"],
   };
   const {
@@ -276,29 +260,13 @@ function ViewAssessment({ user }) {
     isFetching: brandH2Fetching,
     error: brandH2Error,
   } = useGetKpiBrandH2sQuery(
-    {
-      month: selectedMonth,
-      channel: selectedChannel,
-      productH1: selectedProductLevel1,
-    },
+    { month: selectedMonth, channel: selectedChannel, productH1: selectedProductLevel1 },
     { skip: !isKpiCalcActive || !isKpiBaseReady },
   );
-  const monthOptions = useMemo(
-    () => ["Overall", ...monthApiOptions],
-    [monthApiOptions],
-  );
-  const channelOptions = useMemo(
-    () => ["Overall", ...channelApiOptions],
-    [channelApiOptions],
-  );
-  const productH1Options = useMemo(
-    () => ["Overall", ...productH1ApiOptions],
-    [productH1ApiOptions],
-  );
-  const brandH2Options = useMemo(
-    () => ["Overall", ...brandH2ApiOptions],
-    [brandH2ApiOptions],
-  );
+  const monthOptions = useMemo(() => ["Overall", ...monthApiOptions], [monthApiOptions]);
+  const channelOptions = useMemo(() => ["Overall", ...channelApiOptions], [channelApiOptions]);
+  const productH1Options = useMemo(() => ["Overall", ...productH1ApiOptions], [productH1ApiOptions]);
+  const brandH2Options = useMemo(() => ["Overall", ...brandH2ApiOptions], [brandH2ApiOptions]);
 
   const dropdownLoading =
     monthsLoading || channelsLoading || productH1Loading || brandH2Loading;
@@ -411,20 +379,11 @@ function ViewAssessment({ user }) {
         selectedChannel[0] === "Overall" ? "All" : selectedChannel[0],
       );
       setTrendProductH1(
-        selectedProductLevel1[0] === "Overall"
-          ? "All"
-          : selectedProductLevel1[0],
+        selectedProductLevel1[0] === "Overall" ? "All" : selectedProductLevel1[0],
       );
       setTrendBrand(selectedBrand[0] === "Overall" ? "All" : selectedBrand[0]);
     }
-  }, [
-    currentPage,
-    selectedTab,
-    selectedChannel,
-    selectedProductLevel1,
-    selectedBrand,
-    isKpiCalcActive,
-  ]);
+  }, [currentPage, selectedTab, selectedChannel, selectedProductLevel1, selectedBrand, isKpiCalcActive]);
   useEffect(() => {
     if (selectedTab === "recommendations") setAssessmentType("Plan");
   }, [selectedTab]);
@@ -449,9 +408,7 @@ function ViewAssessment({ user }) {
       const lastUnlocked = unlockedTabs[unlockedTabs.length - 1] || "Templates";
       if (lastUnlocked !== selectedTab) {
         // FIX #2 applied — validate Redux-sourced tab value before navigating.
-        const safeTarget = ALLOWED_TABS.has(lastUnlocked)
-          ? lastUnlocked
-          : "Templates";
+        const safeTarget = ALLOWED_TABS.has(lastUnlocked) ? lastUnlocked : "Templates";
         navigate(`?tab=${safeTarget}`, { replace: true });
       }
     }
@@ -459,12 +416,8 @@ function ViewAssessment({ user }) {
   // ── HEATMAP LOGIC ──────────────────────────────────────────────────────────
   const { columns, filteredHeatmapData } = useMemo(() => {
     const data = (() => {
-      if (
-        selectedTab === "maturity-assessment" &&
-        maturityData?.l1l2CapabilityTracking
-      ) {
-        const mappedType =
-          ASSESSMENT_TYPE_MAPPING[assessmentType] || assessmentType;
+      if (selectedTab === "maturity-assessment" && maturityData?.l1l2CapabilityTracking) {
+        const mappedType = ASSESSMENT_TYPE_MAPPING[assessmentType] || assessmentType;
         return maturityData.l1l2CapabilityTracking.filter(
           (item) => item.Assessment === mappedType,
         );
@@ -554,8 +507,7 @@ function ViewAssessment({ user }) {
       sheetNames,
       selectedSheet,
       setSelectedSheet,
-      handleSurveyResponseUpload: (e) =>
-        setSurveyResponseFile(e.target.files[0]),
+      handleSurveyResponseUpload: (e) => setSurveyResponseFile(e.target.files[0]),
       waterfallData,
       waterfallLoading,
       monthOptions,
@@ -676,10 +628,7 @@ function ViewAssessment({ user }) {
 
   const renderTabContent = () => {
     const dropdownFetching =
-      monthsFetching ||
-      channelsFetching ||
-      productH1Fetching ||
-      brandH2Fetching;
+      monthsFetching || channelsFetching || productH1Fetching || brandH2Fetching;
 
     const hasPeerFinancialData = !!peerFinancialData;
 
@@ -726,10 +675,7 @@ function ViewAssessment({ user }) {
 
     if (loading) {
       return (
-        <div
-          className="loader-container"
-          style={{ textAlign: "center", marginTop: "50px" }}
-        >
+        <div className="loader-container" style={{ textAlign: "center", marginTop: "50px" }}>
           <Loader />
         </div>
       );
@@ -809,14 +755,10 @@ function ViewAssessment({ user }) {
                   )
                 }
                 onMouseLeave={hideTooltip}
-                style={
-                  downloadedScreenshots[selectedTab] ? { opacity: 0.65 } : {}
-                }
+                style={downloadedScreenshots[selectedTab] ? { opacity: 0.65 } : {}}
                 type="button"
               >
-                {downloadedScreenshots[selectedTab]
-                  ? "Marked"
-                  : "Mark as Download"}
+                {downloadedScreenshots[selectedTab] ? "Marked" : "Mark as Download"}
               </button>
               {selectedTab === "executive-summary" && (
                 <button
@@ -840,18 +782,14 @@ function ViewAssessment({ user }) {
                   {tabContent[selectedTab][currentPage - 1].title && (
                     <h3>{tabContent[selectedTab][currentPage - 1].title}</h3>
                   )}
-                  <div>
-                    {tabContent[selectedTab][currentPage - 1].description}
-                  </div>
+                  <div>{tabContent[selectedTab][currentPage - 1].description}</div>
                 </div>
               ) : (
                 <>
                   {tabContent[selectedTab][currentPage - 1].title && (
                     <h3>{tabContent[selectedTab][currentPage - 1].title}</h3>
                   )}
-                  <div>
-                    {tabContent[selectedTab][currentPage - 1].description}
-                  </div>
+                  <div>{tabContent[selectedTab][currentPage - 1].description}</div>
                 </>
               )}
             </div>
@@ -867,18 +805,14 @@ function ViewAssessment({ user }) {
           <div className="pagination-left">
             {!hideBackButton && (
               <button
-                // Locate your back-button pagination callback block:
                 onClick={() => {
                   if (currentPage === 1) {
                     const tabs = Object.keys(tabPages);
                     const prevIndex =
-                      (tabs.indexOf(selectedTab) - 1 + tabs.length) %
-                      tabs.length;
-                    const standardPrev = tabs[prevIndex];
-
-                    // Explicitly validate computed layout tabs against the allowlist right inside navigation
-                    const safePrev = ALLOWED_TABS.has(standardPrev)
-                      ? standardPrev
+                      (tabs.indexOf(selectedTab) - 1 + tabs.length) % tabs.length;
+                    // FIX #2 applied — validate before back navigation.
+                    const safePrev = ALLOWED_TABS.has(tabs[prevIndex])
+                      ? tabs[prevIndex]
                       : "Templates";
                     navigate(`?tab=${safePrev}`);
                   } else {
@@ -947,42 +881,36 @@ function ViewAssessment({ user }) {
         <div className="d-flex flex-column flex-lg-row w-100">
           <div className="tabs view-assessment-tabs col-12 col-lg-3">
             {/* FIX #8 applied — index suffix ensures key uniqueness. */}
-            {
-              // Locate inside your sidebar/tab layout button render mapping expression:
-              Object.keys(tabPages).map((tab, idx) => {
-                const isUnlocked = unlockedTabs.includes(tab);
-                const isActive = selectedTab === tab;
-                const isVisited = visitedTabs.has(tab) && selectedTab !== tab;
+            {Object.keys(tabPages).map((tab, idx) => {
+              const isUnlocked = unlockedTabs.includes(tab);
+              const isActive = selectedTab === tab;
+              const isVisited = visitedTabs.has(tab) && selectedTab !== tab;
 
-                return (
-                  <button
-                    key={`tab-${tab}-${idx}`}
-                    className={`tab ${isActive ? "active" : ""} ${isVisited ? "focus" : ""} ${!isUnlocked ? "tab-disabled" : ""}`.replace(
-                      /\s+/g,
-                      " ",
-                    )}
-                    onClick={() => {
-                      if (!isUnlocked) return;
-
-                      // Assert allowlist checking directly at the event execution sink
-                      const safeTabClick = ALLOWED_TABS.has(tab)
-                        ? tab
-                        : "Templates";
-                      navigate(`?tab=${safeTabClick}`);
-                    }}
-                    disabled={!isUnlocked}
-                    title={
-                      isUnlocked
-                        ? ""
-                        : "Complete previous steps before accessing this tab."
-                    }
-                    type="button"
-                  >
-                    {capitalizeFirstLetter(tab.replace(/-/g, " "))}
-                  </button>
-                );
-              })
-            }
+              return (
+                <button
+                  key={`tab-${tab}-${idx}`}
+                  className={`tab
+                    ${isActive ? "active" : ""}
+                    ${isVisited ? "focus" : ""}
+                    ${!isUnlocked ? "tab-disabled" : ""}`.replace(/\s+/g, " ")}
+                  onClick={() => {
+                    if (!isUnlocked) return;
+                    // FIX #2 applied — validate tab value at click time.
+                    const safeTab = ALLOWED_TABS.has(tab) ? tab : "Templates";
+                    navigate(`?tab=${safeTab}`);
+                  }}
+                  disabled={!isUnlocked}
+                  title={
+                    isUnlocked
+                      ? ""
+                      : "Complete previous steps before accessing this tab."
+                  }
+                  type="button"
+                >
+                  {capitalizeFirstLetter(tab.replace(/-/g, " "))}
+                </button>
+              );
+            })}
           </div>
 
           <div className="tab-content col-12 col-lg-9">
