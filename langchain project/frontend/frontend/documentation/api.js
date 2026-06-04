@@ -1,47 +1,44 @@
 // services/api.js
 //
-// SECURITY FIXES APPLIED:
-// ✅ CWE-918 (SSRF)             : SAFE_API_BASE validated via allowlist in apiUrlValidator.js.
-//                                 Prevents env-var poisoning that could redirect fetch calls
-//                                 to internal services (localhost, 169.254.x.x, etc.)
-// ✅ CWE-20  (Input Validation) : Year parameter validated as 4-digit number before URL build.
-// ✅ CWE-209 (Info Disclosure)  : handleResponse returns safe messages; no stack traces exposed.
-// ✅ CWE-754 (Timeout)          : Every fetch is wrapped in fetchWithTimeout (30 s).
+// SAST fixes applied:
+//  ✅ CWE-918 (SSRF)            : SAFE_API_BASE from apiUrlValidator replaces raw env concat.
+//  ✅ CWE-20  (Input Validation) : year parameter validated as 4-digit string before URL build.
+//  ✅ CWE-209 (Info Disclosure)  : handleResponse never surfaces raw server payloads.
+//  ✅ CWE-754 (Timeout)          : fetchWithTimeout aborts stalled requests after 30 s.
 //
-// Original vulnerable pattern (DO NOT revert):
+// Original vulnerable pattern (do NOT revert):
 //   const API_BASE =
 //     process.env.REACT_APP_API_BASE_URL || `${process.env.REACT_APP_API_URL}/api`;
 //
-// An attacker who can pollute REACT_APP_API_BASE_URL (e.g. via CI/CD misconfiguration
-// or a poisoned .env file) could redirect all fetch calls to an arbitrary host.
-// getSafeApiUrl() in apiUrlValidator.js asserts the scheme and origin against an
-// allow-list once at module-load time, preventing that.
+// That string was used directly in fetch() with no origin validation, allowing
+// an attacker who controls the env var to redirect calls to internal services.
 
 import { SAFE_API_BASE } from "../utils/apiUrlValidator";
 
 // ─── Timeout helper ────────────────────────────────────────────────────────────
-// CWE-754: Wrap every fetch so hanging requests are aborted after 30 s.
+// CWE-754: every fetch is given an explicit 30-second budget.
+// Without a timeout a slow/hung server silently blocks the UI indefinitely.
 const REQUEST_TIMEOUT_MS = 30_000;
 
 const fetchWithTimeout = (url, options = {}) => {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timerId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   return fetch(url, { ...options, signal: controller.signal }).finally(() =>
-    clearTimeout(id),
+    clearTimeout(timerId),
   );
 };
 
 // ─── Response handler ──────────────────────────────────────────────────────────
-// CWE-209: Never surface raw server error payloads to the caller.
+// CWE-209: only expose a pre-approved message string; never re-throw raw JSON.
 const handleResponse = async (response) => {
   if (!response.ok) {
-    let safeMessage = "Request failed. Please try again.";
+    let safeMessage = "API request failed.";
     try {
       const body = await response.json();
-      // Only expose a pre-formatted message field, never the full object.
+      // Only accept a plain string field named "error" — nothing else.
       if (typeof body?.error === "string") safeMessage = body.error;
     } catch {
-      // JSON parse failure — keep the generic message.
+      // Body wasn't JSON — keep the generic message.
     }
     throw new Error(safeMessage);
   }
@@ -52,11 +49,11 @@ const handleResponse = async (response) => {
   }
 };
 
-// ─── API Service ───────────────────────────────────────────────────────────────
+// ─── API service ───────────────────────────────────────────────────────────────
 export const apiService = {
-  // CWE-918 fix : SAFE_API_BASE replaces the raw API_BASE variable.
-  // CWE-20  fix : year is validated to be a 4-digit numeric string; anything
-  //               else falls back to "2024", preventing path-traversal injection.
+  // CWE-918: SAFE_API_BASE (validated origin) replaces the raw env variable.
+  // CWE-20:  year is coerced to a 4-digit numeric string; anything else falls
+  //          back to "2024" to prevent path-traversal in the URL segment.
   getOTIFData: async (year = "2024") => {
     const safeYear = /^\d{4}$/.test(String(year)) ? String(year) : "2024";
 
@@ -70,8 +67,7 @@ export const apiService = {
         Channel_Metrics: Array.isArray(jsonData[month].Channel_Metrics)
           ? jsonData[month].Channel_Metrics
           : [],
-        Overall_Monthly_Metrics:
-          jsonData[month].Overall_Monthly_Metrics ?? {},
+        Overall_Monthly_Metrics: jsonData[month].Overall_Monthly_Metrics ?? {},
       };
     });
 
@@ -83,14 +79,15 @@ export const apiService = {
     return handleResponse(response);
   },
 
-  // Simple TTL cache (5 min) — avoids redundant API calls on re-renders.
+  // Simple in-memory cache with a 5-minute TTL.
+  // The original cache had no expiry, so stale data was served indefinitely.
   getCachedOTIFData: (() => {
     let cache = null;
     let cacheTs = 0;
-    const TTL = 5 * 60 * 1000;
+    const TTL_MS = 5 * 60 * 1000; // 5 minutes
 
     return async (year) => {
-      if (!cache || Date.now() - cacheTs > TTL) {
+      if (!cache || Date.now() - cacheTs > TTL_MS) {
         cache = await apiService.getOTIFData(year);
         cacheTs = Date.now();
       }
