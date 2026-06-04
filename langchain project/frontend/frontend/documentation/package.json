@@ -5,7 +5,7 @@
     "dependencies": {
         "@azure/msal-browser": "^3.30.0",
         "@azure/msal-react": "^2.2.0",
-        "@craco/craco": "^7.1.0",
+        "@craco/craco": "^5.9.0",
         "@emotion/react": "^11.14.0",
         "@emotion/styled": "^11.14.1",
         "@fortawesome/fontawesome-free": "^6.7.2",
@@ -30,11 +30,11 @@
         "docxtemplater": "^3.61.2",
         "dotenv": "^16.4.5",
         "express": "^4.19.2",
-        "file-type": "^20.5.0",
+        "file-type": "^22.0.1",
         "flickity": "^3.0.0",
         "html2canvas": "^1.4.1",
-        "jspdf": "^3.0.1",
-        "node-polyfill-webpack-plugin": "^4.1.0",
+        "jspdf": "^4.2.1",
+        "node-polyfill-webpack-plugin": "^4.0.0",
         "nodemon": "^3.1.4",
         "openai": "^4.57.1",
         "papaparse": "^5.5.2",
@@ -65,7 +65,7 @@
         "stream-browserify": "^3.0.0",
         "styled-components": "^6.1.18",
         "web-vitals": "^2.1.4",
-        "xlsx": "^0.18.5"
+        "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz"
     },
     "scripts": {
         "start": "craco start",
