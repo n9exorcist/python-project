@@ -447,3 +447,31 @@ button {
   margin-right: 8px;
   opacity: 0.6;
 }
+
+/* ── Global text colour fix ───────────────────────────────────────
+   Tailwind utility classes like text-white, text-gray-400, text-green-400
+   are being used inside components that sit on a LIGHT background.
+   Setting the base text to dark means all un-coloured text is readable,
+   and Tailwind colour utilities still override it as expected.
+─────────────────────────────────────────────────────────────────── */
+
+body {
+  color: #111827; /* Tailwind gray-900 — readable on white */
+  background-color: #f9fafb; /* Tailwind gray-50 */
+}
+
+/* Make sure all heading and paragraph defaults are dark */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span,
+label,
+li,
+td,
+th {
+  color: inherit;
+}

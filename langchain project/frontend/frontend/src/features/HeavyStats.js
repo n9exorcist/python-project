@@ -23,7 +23,7 @@ const HeavyStats = React.memo(({ tasks = [], onDelete }) => {
         📊 Heavy Analytics Core Chunk
       </h3>
 
-      <div className="text-xs font-mono bg-white p-2 border rounded overflow-x-auto min-h-[40px] text-gray-600">
+      <div className="text-xs font-mono text-black bg-white p-2 border rounded overflow-x-auto min-h-[40px] text-gray-600">
         {computedStats.length > 0
           ? `Computed Metrics: ${computedStats.join(", ")}`
           : "No task items compiled yet. Add a task above!"}

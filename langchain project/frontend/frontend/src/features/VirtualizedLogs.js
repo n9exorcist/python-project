@@ -6,7 +6,7 @@ const LogRow = ({ index, style }) => {
   return (
     <div
       style={style}
-      className={`flex items-center px-4 border-b border-gray-100 text-xs font-mono ${bgClass}`}
+      className={`flex items-center px-4 border-b border-gray-100 text-xs font-mono text-black ${bgClass}`}
     >
       <span className="text-gray-400 mr-2">[{index + 1}]</span>
       <span className="text-blue-600 font-semibold mr-2">[INFO]</span>
