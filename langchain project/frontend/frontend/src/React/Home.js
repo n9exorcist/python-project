@@ -18,16 +18,17 @@ export const ThemeContext = createContext();
 const Home = () => {
   const [message, setMessage] = useState("");
 
-  // Initial state for the reducer
-  // Initial state of an object with a count property set to 0
-  const [state, dispatch] = React.useReducer(UseReducersy, { count: 0 });
-
-  // 2. Define a state that will be shared across components, in this case, dark mode state
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
   const showmessage = () => {
     setMessage("Hello user, this is one way data binding example");
   };
+
+  // UseReducer - Initial state for the reducer
+  // Initial state of an object with a count property set to 0
+  const [state, dispatch] = React.useReducer(UseReducersy, { count: 0 });
+
+  // UseContext
+  // 2. Define a state that will be shared across components, in this case, dark mode state
+  const [isDarkMode, setIsDarkMode] = useState(false);
 
   const toggleDarkMode = () => {
     setIsDarkMode((prevMode) => !prevMode);

@@ -62,7 +62,7 @@ const MemoizedObjectPanel = memo(({ config, items }) => {
           {items.map((n, i) => (
             <span
               key={i}
-              className="bg-gray-700 text-white font-mono text-xs rounded px-2 py-1"
+              className="bg-gray-700 font-mono text-xs rounded px-2 py-1"
             >
               {n}
             </span>
