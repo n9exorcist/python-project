@@ -22,6 +22,7 @@ import {
 import Home from "./React/Home.js";
 import "./App.css";
 import TaskDashboard from "./features/TaskDashboard.js";
+import TicTacToe from "./features/tictactoe.js";
 
 const API_BASE = "http://127.0.0.1:8001";
 const DEFAULT_THREAD_ID = "market_analyst_session";
@@ -560,6 +561,7 @@ function App() {
       </div>
       <div>
         <TaskDashboard />
+        <TicTacToe />
       </div>
     </>
   );

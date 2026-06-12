@@ -261,6 +261,9 @@ export default function TaskDashboard() {
         Advanced React 2025 Demo
       </h1>
 
+    
+      
+
       {/* Q8 · useRef — perf info without extra state / re-renders */}
       <p className="text-xs text-black text-gray-500 mb-4">
         Dashboard renders: {renderCount.current} · Tasks Δ this render:{" "}
@@ -503,6 +506,8 @@ export default function TaskDashboard() {
           </Suspense>
         )}
       </div>
+
+      
     </div>
   );
 }

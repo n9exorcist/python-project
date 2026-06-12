@@ -1,4 +1,4 @@
-const { useState } = React;
+import React, { useState } from "react";
 
 const TicTacToe = () => {
   // An array of 9 elements to represent the 3x3 board
@@ -80,5 +80,4 @@ const TicTacToe = () => {
   );
 };
 
-// Render logic
-ReactDOM.createRoot(document.getElementById("root")).render(<TicTacToe />);
+export default TicTacToe;
