@@ -1,0 +1,87 @@
+.game-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #ffffff;
+  padding: 30px;
+  border-radius: 16px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+  max-width: 320px;
+  margin: 40px auto;
+  font-family: "Segoe UI", Roboto, sans-serif;
+}
+
+.status-message {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #1f2937;
+  text-align: center;
+  min-height: 2.25rem;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 90px);
+  grid-template-rows: repeat(3, 90px);
+  gap: 10px;
+  background-color: #f3f4f6;
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.square {
+  background-color: #ffffff;
+  border: none;
+  font-size: 2.5rem;
+  font-weight: bold;
+  cursor: pointer;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s ease;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.square:hover {
+  background-color: #f9fafb;
+  transform: translateY(-1px);
+}
+
+.square:active {
+  transform: translateY(1px);
+}
+
+/* Color coding player moves */
+.square.X {
+  color: #2563eb; /* Premium Slate Blue */
+}
+
+.square.O {
+  color: #dc2626; /* Crimson Red */
+}
+
+.reset-btn {
+  margin-top: 25px;
+  padding: 12px 30px;
+  font-size: 1rem;
+  font-weight: 600;
+  background-color: #111827;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  width: 100%;
+  transition:
+    background-color 0.2s,
+    transform 0.1s;
+}
+
+.reset-btn:hover {
+  background-color: #1f2937;
+}
+
+.reset-btn:active {
+  transform: scale(0.98);
+}

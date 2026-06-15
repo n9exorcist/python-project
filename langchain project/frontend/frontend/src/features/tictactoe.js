@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import "./tictactoe.css";
 
 const TicTacToe = () => {
   // An array of 9 elements to represent the 3x3 board
