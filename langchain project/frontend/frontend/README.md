@@ -111,6 +111,20 @@ LANGCHAIN_PROJECT=Market-Analyst-Pro
 LANGCHAIN_TRACING_V2=true
 
 
+
+--
+
+Remove-Item -Recurse -Force venv
+
+python -m venv venv
+
+.\venv\Scripts\activate
+
+python -m pip install -r requirements.txt
+
+
+--
+
 Installation
 1. Clone the repo
 powershell
