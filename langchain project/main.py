@@ -2,9 +2,9 @@
 FastAPI app entry point.
 
 Startup orchestration only: initialize the DB, start the trading scheduler, set
-up the LLM + MCP tools, build the agent graph, and store it on app.state for the
-routes to use. The graph itself lives in graph.py, the trading job in trading.py,
-and the endpoints in routes.py.
+up the LLM + MCP tools, build the supervisor agent graph, and store it on
+app.state for the routes. The graph lives in agents.py, the trading job in
+trading.py, and the endpoints in routes.py.
 """
 
 import os
@@ -20,9 +20,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from app.db.database import DB_PATH, init_db
-from app.core.trade_approval import send_approval_request, wait_for_approval
+from agents import build_supervisor_graph
 from trading import daily_trade_job
-from graph import build_graph
 from routes import router
 
 load_dotenv(find_dotenv())
@@ -40,13 +39,13 @@ async def lifespan(app: FastAPI):
     # 2. Trading scheduler (9:15 AM IST weekdays)
     scheduler = AsyncIOScheduler()
     scheduler.add_job(daily_trade_job, "cron", day_of_week="mon-fri", hour=9, minute=15)
-    # Temporary test trigger: fires daily_trade_job once on every startup.
-    # NOTE: comment this out while you're restarting the server for eval runs,
-    # or it will attempt a trade + Telegram message on each boot.
+    # Temporary test trigger - fires daily_trade_job once on every startup.
+    # With HITL enabled it sends a Telegram approval prompt and HOLDS until you
+    # respond, so comment this out during eval runs / normal restarts.
     scheduler.add_job(daily_trade_job, "date")
     scheduler.start()
 
-    # 3. AI infrastructure (Groq + LangGraph + MCP), then build the graph
+    # 3. AI infrastructure (Groq + LangGraph + MCP), then build the supervisor graph
     mcp_client = None
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as saver:
         await saver.setup()
@@ -57,7 +56,6 @@ async def lifespan(app: FastAPI):
             api_key=os.getenv("GROQ_API_KEY"),
         )
 
-        llm_with_tools = None
         mcp_tools = []
         try:
             mcp_client = MultiServerMCPClient({
@@ -65,16 +63,16 @@ async def lifespan(app: FastAPI):
             })
             mcp_tools = await mcp_client.get_tools()
             print(f"--- LOADED {len(mcp_tools)} MCP TOOLS ---")
-            llm_with_tools = llm.bind_tools(mcp_tools)
         except Exception as e:
             print(f"--- MCP LOAD FAILED: {e} ---")
 
         if not mcp_tools:
             print("--- WARNING: No MCP tools loaded. AI features limited, but trading continues. ---")
 
-        # Build the compiled graph and hand it to the routes via app.state.
-        app.state.app_graph = build_graph(llm, llm_with_tools, mcp_tools, saver, use_llm_guard=False)
-        print("--- AGENT GRAPH READY ---")
+        # The supervisor binds tool subsets internally, so it takes mcp_tools directly
+        # (no llm_with_tools needed). Handed to the routes via app.state.
+        app.state.app_graph = build_supervisor_graph(llm, mcp_tools, saver, use_llm_guard=False)
+        print("--- SUPERVISOR GRAPH READY ---")
 
         yield
 
