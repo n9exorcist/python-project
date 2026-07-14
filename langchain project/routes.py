@@ -13,6 +13,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 
+from observability import obs_handler
+
 DEFAULT_THREAD_ID = "market_analyst_session"
 
 router = APIRouter()
@@ -61,11 +63,15 @@ async def chat_stream(request: Request):
             yield "data: [DONE]\n\n"
         return StreamingResponse(empty_gen(), media_type="text/event-stream")
 
-    # recursion_limit is the loop guard: caps total steps so a bug can't spin forever.
-    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 25}
+    # recursion_limit is the loop guard (supervisor needs headroom);
+    # callbacks wires in observability (per-request tokens/latency/steps + budget guard).
+    config = {"configurable": {"thread_id": thread_id},
+              "recursion_limit": 40,
+              "callbacks": [obs_handler]}
 
     async def event_generator():
         streamed_any = False
+        obs_handler.begin_request()
         try:
             tool_progress_map = {
                 "mcp_search_the_web": [
@@ -132,6 +138,9 @@ async def chat_stream(request: Request):
         except Exception as e:
             yield f"data: {json.dumps({'text': f'[Server error: {str(e)}]'})}\n\n"
 
+        # Runs whether the request succeeded or errored, so a failed run still logs
+        # its metrics and counts its tokens toward the daily total.
+        obs_handler.end_request(label=user_message[:40])
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -148,7 +157,7 @@ async def chat_stream(request: Request):
 async def debug_state(request: Request, thread_id: str):
     """Full saved state, including ToolMessages and tool_calls that /chat/history
     drops. The `name` field attributes each tool result to the tool that produced
-    it — required by the RAGAS runner to isolate FAISS contexts."""
+    it -- required by the RAGAS runner to isolate FAISS contexts."""
     app_graph = request.app.state.app_graph
     snap = await app_graph.aget_state({"configurable": {"thread_id": thread_id}})
     msgs = snap.values.get("messages", []) if snap and snap.values else []
