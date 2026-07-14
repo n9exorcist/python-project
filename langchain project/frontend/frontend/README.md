@@ -177,7 +177,12 @@ Terminal 4 — React Frontend
 powershell
 cd "C:\Users\narayanan.selvaraj\python project\langchain project\frontend\frontend"
 npm start
-
+Terminal 5 - Eval
+One-line version: run_evals.py = fast Groq smoke-test; run_ragas.py = rigorous Gemini/RAGAS evaluation that also X-rays your retrieval. Both read the one dataset.json.
+cd "C:\Users\narayanan.selvaraj\python project\langchain project"
+.\venv\Scripts\activate
+python evals\run_ragas.py
+python evals\run_evals.py --category safety --sleep 3
 
 Example Prompts
 Try these in the UI or Studio:
