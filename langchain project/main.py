@@ -513,6 +513,19 @@ async def chat_stream(request: Request):
         },
     )
 
+# add to main.py — surfaces the ToolMessages /chat/history drops
+@app.get("/chat/debug_state")
+async def debug_state(thread_id: str):
+    snap = await app_graph.aget_state({"configurable": {"thread_id": thread_id}})
+    msgs = snap.values.get("messages", []) if snap and snap.values else []
+    return {"messages": [
+        {"type": m.type,
+         "content": m.content,
+         "tool_calls": getattr(m, "tool_calls", None)}  # args + names, in order
+        for m in msgs
+    ]}
+
+    
 if __name__ == "__main__":
     import uvicorn
     
