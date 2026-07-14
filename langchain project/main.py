@@ -20,6 +20,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from app.db.database import DB_PATH, init_db
+from app.core.trade_approval import send_approval_request, wait_for_approval
 from trading import daily_trade_job
 from graph import build_graph
 from routes import router
