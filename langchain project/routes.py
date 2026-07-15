@@ -71,6 +71,7 @@ async def chat_stream(request: Request):
 
     async def event_generator():
         streamed_any = False
+        writer_pass = 0
         obs_handler.begin_request()
         try:
             tool_progress_map = {
@@ -102,6 +103,15 @@ async def chat_stream(request: Request):
             ):
                 kind = event.get("event")
                 name = event.get("name", "")
+                node = (event.get("metadata") or {}).get("langgraph_node")
+
+                # Reflection can send the draft back for a rewrite, so the writer
+                # may run more than once. Tell the UI to discard the previous draft
+                # instead of appending the new one to it.
+                if kind == "on_chain_start" and node == "writer":
+                    writer_pass += 1
+                    if writer_pass > 1:
+                        yield f"data: {json.dumps({'reset': True})}\n\n"
 
                 if kind == "on_tool_start":
                     steps = tool_progress_map.get(name, [(20, f"Running {name}...")])
@@ -113,6 +123,12 @@ async def chat_stream(request: Request):
                     yield f"data: {json.dumps({'progress_percentage': 100, 'message': f'{name} complete.'})}\n\n"
 
                 elif kind == "on_chat_model_stream":
+                    # Only stream the WRITER's tokens. The supervisor emits its
+                    # routing decision ("researcher") and reflect emits its verdict
+                    # ("PASS") through the same event -- streaming those leaks
+                    # internal reasoning into the user's answer.
+                    if node != "writer":
+                        continue
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content

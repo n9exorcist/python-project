@@ -33,6 +33,14 @@ const chatSlice = createSlice({
       if (last.role !== "ai") return;
       last.text = (last.text || "") + action.payload;
     },
+    // Reflection sent the draft back for a rewrite: clear the discarded draft so
+    // the rewrite replaces it instead of being appended to it.
+    resetLastMessage: (state) => {
+      if (!state.messages.length) return;
+      const last = state.messages[state.messages.length - 1];
+      if (last.role !== "ai") return;
+      last.text = "";
+    },
     setChatHistory: (state, action) => {
       state.messages = Array.isArray(action.payload) ? action.payload : [];
       state.isGenerating = false;
@@ -74,6 +82,7 @@ export const {
   addUserMessage,
   addAiPlaceholder,
   appendChunkToLastMessage,
+  resetLastMessage, // ← new: discards a draft rejected by reflection
   finishGeneration,
   setChatHistory,
   clearChat,

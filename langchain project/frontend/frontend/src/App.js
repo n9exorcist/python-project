@@ -10,6 +10,7 @@ import {
   addUserMessage,
   addAiPlaceholder,
   appendChunkToLastMessage,
+  resetLastMessage, // Added — clears a draft that reflection sent back for a rewrite
   finishGeneration,
   setChatHistory,
   clearChat,
@@ -41,14 +42,7 @@ const SUGGESTIONS = [
 
 function App() {
   const [input, setInput] = useState("");
-  // NEW: State for progress tracking
-  // const [progress, setProgress] = useState({
-  //   active: false,
-  //   value: 0,
-  //   status: "",
-  // });
 
-  // const [progressFading, setProgressFading] = useState(false);
   const { messages, isGenerating, threadId, progress } = useSelector(
     (state) => state.chat,
   );
@@ -57,14 +51,6 @@ function App() {
   const abortControllerRef = useRef(null);
   const textareaRef = useRef(null);
   const messagesContainerRef = useRef(null);
-  // At the top of your component, add this ref:
-  // const progressRef = useRef({ active: false, value: 0, status: "" });
-
-  // // Replace your setProgress calls with this helper:
-  // const updateProgress = (newProgress) => {
-  //   progressRef.current = newProgress;
-  //   setProgress(newProgress);
-  // };
 
   useEffect(() => {
     if (threadId) {
@@ -140,13 +126,6 @@ function App() {
     const userText = text.trim();
     setInput("");
 
-    // Start Progress UI
-    // setProgress({
-    //   active: true,
-    //   value: 10,
-    //   status: "Initializing analyst tools...",
-    // });
-
     // 1. Start Progress via Redux
     dispatch(
       startProgress({ value: 10, status: "Initializing analyst tools..." }),
@@ -199,7 +178,6 @@ function App() {
             if (!dataStr) continue;
 
             if (dataStr === "[DONE]") {
-              // updateProgress({ active: false, value: 100, status: "" });
               dispatch(finishGeneration());
               return;
             }
@@ -207,19 +185,12 @@ function App() {
             try {
               const parsed = JSON.parse(dataStr);
 
-              // Progress event
-              // if (
-              //   parsed.progress_percentage !== undefined ||
-              //   parsed.message ||
-              //   parsed.status
-              // ) {
-              //   updateProgress({
-              //     active: true,
-              //     value:
-              //       parsed.progress_percentage ?? progressRef.current.value,
-              //     status: parsed.message || parsed.status || "Processing...",
-              //   });
-              // }
+              // Reflection sent the draft back for a rewrite. Discard the
+              // previous draft so the rewrite replaces it instead of appending.
+              if (parsed.reset) {
+                dispatch(resetLastMessage());
+                continue;
+              }
 
               // 2. Handle Progress Updates
               if (
@@ -236,19 +207,6 @@ function App() {
                 );
               }
 
-              // Text chunk — hide progress bar using ref, not stale state
-              // if (parsed.text) {
-              //   if (progressRef.current.active) {
-              //     setTimeout(() => setProgressFading(true), 1000); // start fade at 1s
-              //     setTimeout(() => {
-              //       updateProgress({ active: false, value: 0, status: "" });
-              //       setProgressFading(false);
-              //     }, 1400); // remove card at 1.4s
-              //   }
-              //   if (parsed.text.trim()) {
-              //     dispatch(appendChunkToLastMessage(parsed.text));
-              //   }
-              // }
               // 3. Handle Text Chunks and Progress Fading
               if (parsed.text) {
                 // If progress is active and we just started getting text, trigger fade
@@ -279,13 +237,17 @@ function App() {
           if (!dataStr) continue;
 
           if (dataStr === "[DONE]") {
-            // updateProgress({ active: false, value: 100, status: "" });
             dispatch(finishGeneration());
             return;
           }
 
           try {
             const parsed = JSON.parse(dataStr);
+
+            if (parsed.reset) {
+              dispatch(resetLastMessage());
+              continue;
+            }
 
             if (
               parsed.progress_percentage !== undefined ||
@@ -481,7 +443,6 @@ function App() {
                           ) : isLast && isGenerating ? (
                             /* Use the progress object from Redux selector */
                             progress.active ? (
-                              /* UI Matching image_30e876.png */
                               <div
                                 className={`mcp-progress-card${progress.fading ? " hiding" : ""}`}
                               >
