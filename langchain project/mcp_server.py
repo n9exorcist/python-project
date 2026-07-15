@@ -2,7 +2,7 @@ import os
 import json
 import pandas as pd
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from mcp.server.fastmcp import FastMCP, Context
@@ -16,6 +16,10 @@ load_dotenv()
 # All file paths are anchored to THIS file's directory, not the current working
 # directory, so the server behaves the same no matter where you launch it from.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Chunks indexed longer ago than this are flagged STALE in retrieval output,
+# so the agent can caveat rather than silently assert an outdated figure.
+STALE_AFTER_DAYS = int(os.getenv("STALE_AFTER_DAYS", "90"))
 
 # Initialize FastMCP
 mcp = FastMCP("MarketAnalystPro")
@@ -153,6 +157,39 @@ def get_market_cycles() -> str:
 
 
 # --- CORPORATE RECORDS (RAG) TOOL ---
+def _format_with_provenance(doc, idx: int) -> str:
+    """Render a retrieved chunk with its source, version, and age.
+
+    This is what makes an answer reconstructable later: the provenance travels in
+    the tool result -> ToolMessage -> graph state -> /chat/debug_state.
+    """
+    meta = getattr(doc, "metadata", None) or {}
+    source = meta.get("source", "unknown")
+    version = meta.get("doc_version", "unversioned")
+    page = meta.get("page")
+    ingested = meta.get("ingested_at")
+
+    bits = [f"source: {source}", f"v:{version}"]
+    if page is not None:
+        bits.append(f"p.{page}")
+    if ingested:
+        try:
+            dt = datetime.fromisoformat(ingested)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            days = (datetime.now(timezone.utc) - dt).days
+            age = f"indexed {days}d ago"
+            if days > STALE_AFTER_DAYS:
+                age += " \u00b7 STALE"
+            bits.append(age)
+        except Exception:
+            pass
+
+    header = f"[{idx}] " + " \u00b7 ".join(bits)
+    content = getattr(doc, "page_content", str(doc))
+    return f"{header}\n{content}"
+
+
 @mcp.tool()
 def mcp_search_corporate_records(query: str) -> str:
     """
@@ -160,6 +197,10 @@ def mcp_search_corporate_records(query: str) -> str:
     other ingested documents) from the local FAISS knowledge base. Use this for
     company facts, earnings figures, bookings, dividends, and named people that
     live in internal documents rather than on the live web.
+
+    Each result is returned with its provenance: source file, document version,
+    and how long ago it was indexed. Results marked STALE may be outdated -- say
+    so in your answer rather than asserting the figure as current.
     """
     if not retriever:
         return "Error: Local FAISS index not found."
@@ -167,7 +208,9 @@ def mcp_search_corporate_records(query: str) -> str:
         docs = retriever.invoke(query)
         if not docs:
             return "No local records found."
-        return "\n\n".join([getattr(d, "page_content", str(d)) for d in docs])
+        # Provenance is preserved here. The previous version returned page_content
+        # only, discarding metadata entirely -- so answers were unattributable.
+        return "\n\n".join(_format_with_provenance(d, i) for i, d in enumerate(docs, 1))
     except Exception as e:
         return f"Error searching local records: {e}"
 
