@@ -11,6 +11,11 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv, find_dotenv
+
+# MUST run before the local imports below: trade_approval (via trading) reads
+# TELEGRAM_* at import time, so loading .env afterwards leaves them None.
+load_dotenv(find_dotenv())
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -23,8 +28,6 @@ from app.db.database import DB_PATH, init_db
 from agents import build_supervisor_graph
 from trading import daily_trade_job
 from routes import router
-
-load_dotenv(find_dotenv())
 
 MCP_SSE_URL = "http://127.0.0.1:8000/sse"
 
