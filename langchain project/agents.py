@@ -51,11 +51,39 @@ class GraphState(TypedDict, total=False):
     guardrail_reason: str
 
 
-def _first_question(messages):
-    for m in messages:
+def _latest_question(messages):
+    """The CURRENT question -- the last human message, not the first. State is
+    checkpointed per thread, so earlier turns are still in `messages`."""
+    for m in reversed(messages):
         if getattr(m, "type", "") == "human":
             return m.content if isinstance(m.content, str) else str(m.content)
     return ""
+
+
+def make_entry_node(llm, use_llm_guard):
+    """Input guardrail + per-request counter reset.
+
+    delegations / tool_rounds / reflect_attempts are per-REQUEST guards, but the
+    graph state is checkpointed per THREAD. Without an explicit reset they carry
+    over between turns: by the 3rd question in a thread, delegations >= the cap,
+    the supervisor stops delegating, no tool ever runs, and every answer becomes
+    "not available". This node runs first on every request, so it is where they
+    get zeroed.
+    """
+    guard = make_input_guardrail_node(llm=llm, use_llm=use_llm_guard)
+
+    def entry(state: GraphState):
+        result = guard(state) or {}
+        result.update({
+            "delegations": 0,
+            "tool_rounds": 0,
+            "reflect_attempts": 0,
+            "reflection": "",
+            "reflection_verdict": "",
+        })
+        return result
+
+    return entry
 
 
 def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = False,
@@ -80,17 +108,20 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
             print("--- [SUPERVISOR] delegation cap reached -> FINISH ---")
             return {"next_agent": "FINISH"}
 
+        current_q = _latest_question(state.get("messages", []))
         sys = (
-            "You are the SUPERVISOR of a market-analysis team. Based on the "
-            "conversation so far, decide who should act NEXT:\n"
+            "You are the SUPERVISOR of a market-analysis team.\n"
+            f"The user's CURRENT question is: {current_q}\n"
+            "Earlier questions in the conversation are ALREADY ANSWERED -- ignore them. "
+            "Decide who should act NEXT to answer the CURRENT question:\n"
             "- researcher: internal corporate records, company financials, Accenture docs, "
             "safe-haven / sector notes from the knowledge base\n"
             "- web: live news, current market reaction, anything needing the internet\n"
             "- trading: today's Green/Red signal, or verifying executed trades in the database\n"
             "- FINISH: enough information has been gathered to answer, OR the question is "
             "general knowledge needing no lookup.\n\n"
-            "If a specialist already answered the question, reply FINISH. Do not delegate to the "
-            "same specialist twice for the same information.\n"
+            "Reply FINISH only if the CURRENT question has been answered in this turn, or "
+            "needs no lookup. If no specialist has run for the CURRENT question yet, delegate.\n"
             "Reply with exactly ONE word: researcher, web, trading, or FINISH."
         )
         resp = await llm.ainvoke([SystemMessage(content=sys)] + state.get("messages", []))
@@ -183,7 +214,7 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
         if attempts >= MAX_REFLECT:
             return {"reflection_verdict": "pass", "reflect_attempts": attempts + 1}
 
-        question = _first_question(state.get("messages", []))
+        question = _latest_question(state.get("messages", []))
         answer = state.get("final_answer", "")
         sys = (
             "You are a strict reviewer. Given the user's QUESTION and the assistant's ANSWER, "
@@ -211,7 +242,7 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
     # ------------------------- BUILD -------------------------
     g = StateGraph(GraphState)
 
-    g.add_node("input_guard", make_input_guardrail_node(llm=llm, use_llm=use_llm_guard))
+    g.add_node("input_guard", make_entry_node(llm, use_llm_guard))
     g.add_node("supervisor", supervisor_node)
     g.add_node("researcher", researcher_node)
     g.add_node("web", web_node)
