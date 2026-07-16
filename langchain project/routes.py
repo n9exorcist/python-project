@@ -32,13 +32,27 @@ async def get_history(request: Request, thread_id: str = DEFAULT_THREAD_ID):
     raw_messages = state_snapshot.values.get("messages", [])
     formatted = []
 
+    # Only the writer's tagged output is a user-facing answer. Specialists also
+    # append AI messages (their working notes), and replaying those showed the same
+    # answer two or three times on reload.
+    tagged = any(getattr(m, "name", None) == "final_answer" for m in raw_messages)
+
     for msg in raw_messages:
-        if hasattr(msg, "type") and msg.type in ["human", "ai"]:
-            if msg.content:
-                formatted.append({
-                    "role": "user" if msg.type == "human" else "ai",
-                    "text": msg.content if isinstance(msg.content, str) else str(msg.content),
-                })
+        if not getattr(msg, "content", None):
+            continue
+        if msg.type == "human":
+            formatted.append({
+                "role": "user",
+                "text": msg.content if isinstance(msg.content, str) else str(msg.content),
+            })
+        elif msg.type == "ai":
+            # Legacy threads predate the tag; fall back to old behaviour for those.
+            if tagged and getattr(msg, "name", None) != "final_answer":
+                continue
+            formatted.append({
+                "role": "ai",
+                "text": msg.content if isinstance(msg.content, str) else str(msg.content),
+            })
 
     return {"history": formatted, "thread_id": thread_id}
 
@@ -74,6 +88,19 @@ async def chat_stream(request: Request):
         writer_pass = 0
         obs_handler.begin_request()
         try:
+            # The tool map only covers tool calls. Between a tool finishing and the
+            # writer's first token there are several LLM calls whose tokens are
+            # filtered out of the stream -- without these, the bar freezes at 100/100
+            # for the whole thinking phase.
+            node_progress_map = {
+                "supervisor": (15, "Routing the question..."),
+                "researcher": (40, "Researcher reading internal records..."),
+                "web": (40, "Web agent analysing results..."),
+                "trading": (40, "Trading agent reading signals..."),
+                "writer": (85, "Composing the answer..."),
+                "reflect": (95, "Reviewing the answer..."),
+            }
+
             tool_progress_map = {
                 "mcp_search_the_web": [
                     (10, "Initializing Tavily search engine..."),
@@ -112,6 +139,10 @@ async def chat_stream(request: Request):
                     writer_pass += 1
                     if writer_pass > 1:
                         yield f"data: {json.dumps({'reset': True})}\n\n"
+
+                if kind == "on_chain_start" and name in node_progress_map:
+                    pct, msg = node_progress_map[name]
+                    yield f"data: {json.dumps({'progress_percentage': pct, 'message': msg})}\n\n"
 
                 if kind == "on_tool_start":
                     steps = tool_progress_map.get(name, [(20, f"Running {name}...")])

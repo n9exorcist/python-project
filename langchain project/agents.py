@@ -22,6 +22,7 @@ Two controls keep it bounded and honest:
 Guardrails (input guard + writer output sanitizer) are preserved.
 """
 
+import uuid
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -47,8 +48,33 @@ class GraphState(TypedDict, total=False):
     reflection: str           # reviewer critique fed back to the writer
     reflection_verdict: str   # "pass" | "revise"
     reflect_attempts: int
+    draft_id: str            # stable id so a rewrite REPLACES the draft
     blocked: bool
     guardrail_reason: str
+
+
+def _supervisor_digest(messages, limit: int = 300):
+    """A compact view of the turn for the supervisor.
+
+    The supervisor only needs to know what has been tried and roughly what came
+    back -- not the full text of every tool result. Passing the entire message
+    history (a Tavily dump can be thousands of tokens) made a ONE-WORD routing
+    decision cost seconds of latency, twice per request.
+    """
+    lines = []
+    for m in messages:
+        t = getattr(m, "type", "")
+        c = getattr(m, "content", "")
+        c = c if isinstance(c, str) else str(c)
+        if t == "human":
+            lines.append(f"USER ASKED: {c}")
+        elif t == "tool":
+            snip = c[:limit].replace("\n", " ")
+            more = f" ...[{len(c)} chars total]" if len(c) > limit else ""
+            lines.append(f"TOOL {getattr(m, 'name', '?')} RETURNED: {snip}{more}")
+        elif t == "ai" and c.strip():
+            lines.append(f"SPECIALIST SAID: {c[:limit]}")
+    return "\n".join(lines[-10:]) or "(nothing yet)"
 
 
 def _latest_question(messages):
@@ -80,6 +106,7 @@ def make_entry_node(llm, use_llm_guard):
             "reflect_attempts": 0,
             "reflection": "",
             "reflection_verdict": "",
+            "draft_id": "",
         })
         return result
 
@@ -124,7 +151,12 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
             "needs no lookup. If no specialist has run for the CURRENT question yet, delegate.\n"
             "Reply with exactly ONE word: researcher, web, trading, or FINISH."
         )
-        resp = await llm.ainvoke([SystemMessage(content=sys)] + state.get("messages", []))
+        # Compact digest, NOT the full message list -- see _supervisor_digest.
+        digest = _supervisor_digest(state.get("messages", []))
+        resp = await llm.ainvoke([
+            SystemMessage(content=sys),
+            HumanMessage(content=f"Conversation so far:\n{digest}\n\nWho acts next?"),
+        ])
         raw = (resp.content if isinstance(resp.content, str) else str(resp.content)).strip().lower()
 
         decision = "FINISH"
@@ -206,7 +238,18 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
         clean, modified, findings = scan_output(raw)
         if modified:
             print(f"--- [GUARDRAIL] output sanitized: {findings} ---")
-        return {"messages": [AIMessage(content=clean)], "final_answer": clean}
+
+        # Reuse the same message id across a reflection rewrite: add_messages updates
+        # an existing message by id, so the rewrite REPLACES the draft instead of
+        # leaving two answers in state (which /chat/history would then replay).
+        # name="final_answer" marks this as the only message the UI should show --
+        # specialists also append AI messages, and those are internal working notes.
+        draft_id = state.get("draft_id") or f"answer-{uuid.uuid4().hex[:8]}"
+        return {
+            "messages": [AIMessage(content=clean, id=draft_id, name="final_answer")],
+            "final_answer": clean,
+            "draft_id": draft_id,
+        }
 
     # ------------------------- REFLECT (self-correction) -------------------------
     async def reflect_node(state: GraphState):
