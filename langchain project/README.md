@@ -796,7 +796,7 @@ Expected: The agent will try to search FAISS for a cake recipe. FAISS will retur
 A multi-agent LangGraph system that answers market questions from internal corporate
 records and live web intelligence, with the engineering layers that make an agent safe
 to rely on: evaluation, guardrails, human-in-the-loop approval, multi-agent supervision,
-reflection, and observability.
+reflection, observability, and retrieval provenance.
 
 The reasoning engine is fully decoupled from its tools (via MCP), so tools can be swapped
 without touching the graph.
@@ -813,82 +813,92 @@ FastAPI · SSE streaming  (port 8001)          ── app.state.app_graph
 LangGraph Supervisor Graph  (the reasoning engine)
    input_guard → supervisor → { researcher | web | trading } → tools → writer → reflect
         │                                                                        │
-   AsyncSqliteSaver (cross-session memory)                                     END
+   AsyncSqliteSaver (cross-session memory)                                      END
         │
 MCP Server (port 8000) — tools decoupled from reasoning
    corporate_records (FAISS) · web_search (Tavily) · signals_csv · trade_history (SQLite)
 
-Separate scheduler path:
-   APScheduler → signal → Telegram Human Approval (HITL) → execution
+Separate execution path (no graph, no web server):
+   APScheduler (local) / GitHub Actions (cloud) → run_trade.py
+      → signal → Telegram Human Approval → ICICI execution
 ```
 
+- **Runtime:** Python 3.14, managed with `uv`
 - **LLM:** Groq `llama-3.3-70b-versatile`
-- **Embeddings / RAGAS judge:** Google Gemini
-- **Vector store:** FAISS · **Web search:** Tavily
+- **Embeddings:** Google Gemini · **Vector store:** FAISS · **Web search:** Tavily
 
 ---
 
 ## What's built, and how it's verified
 
-| Capability                 | Where                                                                                          | How it was verified                                                                                                                                                                  |
-| -------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Evaluation**             | `evals/dataset.json`, `evals/run_evals.py` (Groq judge), `evals/run_ragas.py` (Gemini + RAGAS) | 20-case suite scored on faithfulness / context / tool-use; produced a baseline scorecard and caught a real prompt-injection leak on the first run                                    |
-| **Guardrails**             | `guardrails.py`                                                                                | Input layer blocks injection / exfil before the model; output layer redacts secrets & PII. `safety_prompt_leak` eval flipped **FAIL → PASS** after wiring                            |
-| **Human-in-the-loop**      | `app/core/trade_approval.py`, `trading.py`                                                     | Scheduler pauses and sends Telegram Approve/Reject buttons, holds until a response; auth + execution happen only after approval                                                      |
-| **Multi-agent supervisor** | `agents.py`                                                                                    | Supervisor delegates to focused specialists. Verified in LangGraph Studio: `input_guard → supervisor (next_agent: researcher) → researcher` routed correctly                         |
-| **Reflection + tool-cap**  | `agents.py`                                                                                    | Specialist tool budget (`MAX_TOOL_ROUNDS`) + writer self-critique. Studio trace confirmed **one** `mcp_search_corporate_records` call (down from 4) with the correct record returned |
-| **Observability**          | `observability.py`                                                                             | Per-request tokens / latency / step counts + daily token-budget guard, logged to console and `logs/metrics.jsonl`                                                                    |
+| Capability                 | Where                                      | How it was verified                                                                                                                                             |
+| -------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Evaluation**             | `evals/dataset.json`, `evals/run_evals.py` | 20-case suite, LLM-as-judge on faithfulness/relevance + deterministic tool-match. Produced a baseline and caught a real prompt-injection leak on its first run  |
+| **Guardrails**             | `guardrails.py`                            | Input layer blocks injection/exfil before the model; output layer redacts secrets & PII. `safety_prompt_leak` flipped **FAIL → PASS**; safety category now 100% |
+| **Human-in-the-loop**      | `app/core/trade_approval.py`, `trading.py` | Sends Telegram Approve/Reject buttons and waits. Auth + execution happen only after approval. Indefinite hold locally; time-bounded in CI                       |
+| **Multi-agent supervisor** | `agents.py`                                | Verified in LangGraph Studio: `input_guard → supervisor (next_agent: researcher) → researcher → tool → writer`                                                  |
+| **Reflection + tool-cap**  | `agents.py`                                | Studio trace confirmed **one** tool call (down from 4). Reflection demonstrably improved an answer (added the "according to our internal records" preface)      |
+| **Observability**          | `observability.py`                         | Per-request tokens/latency/step counts + daily token-budget guard, logged to console and `logs/metrics.jsonl`                                                   |
+| **Provenance**             | `ingest.py`, `mcp_server.py`               | `check_index.py` confirms all 67 chunks carry source + content-hash version + indexed-at. Retrieval returns them; stale sources flagged `STALE`                 |
 
 ---
 
 ## Project structure
 
 ```
-main.py                     # startup orchestration (builds graph, scheduler, MCP)
-agents.py                   # supervisor graph + specialists + reflection (build_supervisor_graph)
+main.py                     # startup orchestration (graph, scheduler, MCP)
+agents.py                   # supervisor graph + specialists + reflection
 guardrails.py               # input injection/exfil guard + output secret/PII sanitizer
 observability.py            # metrics callback + daily token-budget guard
-routes.py                   # FastAPI endpoints (/chat/stream, /chat/history, /chat/debug_state)
-trading.py                  # trading services + scheduled daily job (with HITL)
+routes.py                   # FastAPI endpoints
+trading.py                  # trading services + the trade job (with HITL)
+run_trade.py                # cloud entry point — runs ONLY the trade job, then exits
 studio_graph.py             # LangGraph Studio entry — reuses build_supervisor_graph
 mcp_server.py               # MCP tool server (FAISS RAG, Tavily, signals, trade history)
+ingest.py                   # FAISS ingestion with provenance stamping
+check_index.py              # diagnostic: what's actually in the FAISS index
 app/core/trade_approval.py  # Telegram approve/reject + long-poll hold
 evals/
-  dataset.json              # 20-case test suite (shared by both runners)
-  run_evals.py              # lightweight harness, Groq-as-judge
-  run_ragas.py              # rigorous RAGAS metrics, Gemini-as-judge
+  dataset.json              # 20-case test suite
+  run_evals.py              # eval harness, LLM-as-judge
 logs/
   metrics.jsonl             # per-request observability records
+requirements.txt            # Windows/local (Python 3.14)
+requirements-cloud.txt      # Linux/CI — minimal, trade path only
 ```
 
 ---
 
 ## Running it
 
-Three processes:
+```powershell
+.\venv\Scripts\activate
 
-```bash
-# 1. MCP tool server (port 8000)  — start FIRST
+# 1. MCP tool server (port 8000) — start FIRST
 python mcp_server.py
 
-# 2. FastAPI backend (port 8001)
+# 2. FastAPI backend (port 8001) — separate terminal
 python main.py
 
-# 3. Frontend, or use the built-in API docs at http://127.0.0.1:8001/docs
+# 3. Frontend, or the built-in API docs at http://127.0.0.1:8001/docs
+```
+
+**Re-ingest documents** (after changing anything in `data/`):
+
+```powershell
+python ingest.py
+python check_index.py        # verify vector count + provenance
+# then RESTART mcp_server.py — it loads the FAISS index once, at import
 ```
 
 **Evaluate** (server must be running):
 
-```bash
-python evals/run_ragas.py --sleep 4        # rigorous, Gemini-judged (spares Groq budget)
-python evals/run_evals.py                   # quick, Groq-judged smoke test
+```powershell
+python evals\run_evals.py
+python evals\run_evals.py --category safety
 ```
 
-**Inspect the graph** in LangGraph Studio:
-
-```bash
-langgraph dev
-```
+**Inspect the graph:** `langgraph dev`
 
 ---
 
@@ -911,8 +921,13 @@ ICICI_SESSION_TOKEN=...
 # Observability budget guard (Groq free tier = 100000/day)
 DAILY_TOKEN_LIMIT=100000
 
-# Optional: RAGAS judge model + LangSmith tracing
-RAGAS_JUDGE_MODEL=gemini-2.0-flash
+# Retrieval: flag chunks older than this as STALE
+STALE_AFTER_DAYS=90
+
+# HITL: approval wait in CI (seconds). Local always holds indefinitely.
+APPROVAL_TIMEOUT_SECONDS=900
+
+# Optional: LangSmith tracing
 LANGSMITH_API_KEY=...
 LANGSMITH_TRACING=true
 LANGSMITH_PROJECT=market-analyst
@@ -922,22 +937,39 @@ LANGSMITH_PROJECT=market-analyst
 
 ## Known limitations
 
-- **Groq free-tier budget (100K tokens/day)** is the practical dev bottleneck — a multi-agent query with reflection burns several thousand tokens, so heavy iteration hits the daily cap. Dev tier or a second provider for dev runs lifts it.
-- **Output guardrail** sanitizes the stored/eval answer, not tokens already streamed live; airtight live-stream guarding needs the writer output buffered before emit.
-- **HITL hold is in-memory** — a server restart mid-hold loses the pending approval (the Telegram buttons remain but do nothing). Persist pending approvals to the DB for restart-safety.
-- **Observability** aggregates one request at a time (fine for sequential evals / single-user chat; concurrent load needs per-`run_id` tracking).
+- **No retrieval-quality metrics.** Evals score faithfulness against a reference answer,
+  not against the chunks actually retrieved — so "the retriever missed it" and "the model
+  ignored it" look the same. (RAGAS was dropped: its `scikit-network` dependency has no
+  Python 3.14 wheel and needs a C++ toolchain to build.)
+- **Faithfulness ≠ truth.** Evals measure groundedness to the knowledge base. An answer
+  perfectly grounded in a stale filing still scores well. Provenance surfaces source +
+  version + age so staleness is _visible_; it does not validate the source.
+- **No freshness re-validation.** A source that changes _after_ indexing goes undetected.
+  The `doc_version` content hash is the hook: re-ingest, diff hashes, flag what moved.
+- **Groq free tier (100K tokens/day)** is the practical dev bottleneck — a multi-agent
+  query with reflection burns ~3-4K tokens.
+- **Output guardrail** sanitizes the stored answer, not tokens already streamed live.
+- **HITL hold is in-memory** — a restart mid-hold loses the pending approval.
+- **Observability** aggregates one request at a time (fine for sequential evals /
+  single-user chat; concurrent load needs per-`run_id` tracking).
+- **`requirements.txt` is a Windows freeze** — do not use it for the Linux CI job. That is
+  what `requirements-cloud.txt` is for.
 
 ---
 
 ## Roadmap
 
-Built: Evaluation · Guardrails · HITL · Multi-agent supervision · Reflection · Observability.
+Built: Evaluation · Guardrails · HITL · Multi-agent supervision · Reflection ·
+Observability · Retrieval provenance.
 
 Next, roughly in order:
 
-1. **Hybrid retrieval** — combine keyword + semantic (currently semantic-only)
-2. **Long-term memory** — episodic / semantic recall across sessions (currently working memory only)
-3. **Plan-and-execute** — explicit plan step for complex multi-step queries
-4. **Deployment** — cloud deploy with observability wired in
-5. **Sovereign on-prem** — self-hosted LLM / embeddings / search to remove external dependencies
-6. **Live execution** — flip MockBroker to real orders. **Last**, and gated by the HITL approval already in place.
+1. **Retrieval diagnostics** — score answers against the actual retrieved chunks
+   (via `/chat/debug_state`), recovering what RAGAS would have given without the dependency
+2. **Freshness re-validation** — hash-diff on re-ingest to flag changed sources
+3. **Hybrid retrieval** — combine keyword + semantic (currently semantic-only)
+4. **Long-term memory** — episodic/semantic recall across sessions
+5. **Plan-and-execute** — explicit plan step for complex multi-step queries
+6. **Sovereign on-prem** — self-hosted LLM / embeddings / search
+7. **Live execution** — flip MockBroker to real orders. **Last**, gated by the HITL
+   approval already in place.

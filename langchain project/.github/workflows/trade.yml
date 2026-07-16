@@ -1,37 +1,45 @@
 name: Daily Options Selling Trade
+
 on:
   schedule:
-    - cron: "45 3 * * 1-5"
+    - cron: "45 3 * * 1-5" # 03:45 UTC = 09:15 IST, Mon-Fri
   workflow_dispatch:
 
 jobs:
   trade:
     runs-on: ubuntu-latest
+    # Hard cap. The job waits for Telegram approval, so without this it could
+    # camp on the runner until GitHub's 6-hour limit and burn the Actions quota.
+    timeout-minutes: 25
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
         run: |
-          # Use quotes because of the space in the folder name
-          pip install -r "langchain project/requirements.txt"
+          # requirements-cloud.txt, NOT requirements.txt: the latter is a Windows
+          # freeze containing pywin32 (which does not exist on Linux and broke
+          # run #77) plus the whole AI stack, which the trade path never imports.
+          pip install -r "langchain project/requirements-cloud.txt"
           playwright install chromium --with-deps
 
-      - name: Run Trading Script
+      - name: Run trade job
         env:
           ICICI_API_KEY: ${{ secrets.ICICI_API_KEY }}
           ICICI_USER_ID: ${{ secrets.ICICI_USER_ID }}
           ICICI_PASSWORD: ${{ secrets.ICICI_PASSWORD }}
           ICICI_2FA_SECRET: ${{ secrets.ICICI_2FA_SECRET }}
           ICICI_SESSION_TOKEN: ${{ secrets.ICICI_SESSION_TOKEN }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # Set the path so Python can find your app/utils folders
+          # PYTHONPATH so `from app...` and `from trading import ...` resolve
           export PYTHONPATH="${PYTHONPATH}:$(pwd)/langchain project"
-          python "langchain project/main.py"
+          # run_trade.py runs the trade job and exits. It does NOT start FastAPI
+          # (a web server would block the runner until the 6-hour timeout).
+          python "langchain project/run_trade.py"

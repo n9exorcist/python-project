@@ -1,0 +1,40 @@
+# Dependencies for the GitHub Actions "Daily Options Selling Trade" job ONLY.
+#
+# WHY THIS FILE EXISTS:
+#   requirements.txt is a WINDOWS freeze. It contains pywin32 / pywin32-ctypes,
+#   which do not exist on Linux -- that is what broke workflow run #77 with
+#   "No matching distribution found for pywin32==312". Re-freezing on Windows
+#   re-introduces them every time, so the fix has to be a separate file.
+#
+#   It also installs ~244 packages (faiss, langgraph, the whole AI stack) for a
+#   job that imports none of them. This list is only what run_trade.py needs.
+#
+# Unpinned on purpose: this must resolve on the Ubuntu runner.
+
+# Broker
+breeze-connect
+
+# Config
+python-dotenv
+
+# Database (trade logging)
+sqlalchemy
+
+# Telegram notifications (autopilot.send_telegram_msg)
+requests
+
+# Telegram approval long-poll (trade_approval.py)
+httpx
+
+# Signal reading (signals.csv)
+pandas
+
+# Automated ICICI login, if autopilot.get_breeze_token uses browser automation.
+# Remove if the cloud job always uses a manual ICICI_SESSION_TOKEN secret.
+playwright
+
+# ICICI 2FA (TOTP) -- autopilot.get_breeze_token
+pyotp
+
+# GitHub secret encryption (only if the job runs bridge.py)
+pynacl

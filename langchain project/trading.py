@@ -1,12 +1,17 @@
 """
-Trading layer: service instances + the scheduled daily options-selling job.
+Trading layer: service instances + the daily options-selling job.
 
-This is the SCHEDULER path (APScheduler -> daily_trade_job -> execute_logic),
-separate from the chat graph. The human-in-the-loop Telegram approval lives here,
-because this is where a real order actually fires.
+This is the EXECUTION path (daily_trade_job -> execute_logic), separate from the
+chat graph. The human-in-the-loop Telegram approval lives here, because this is
+where a real order actually fires.
+
+Two callers:
+  - main.py  : APScheduler fires it locally (approval holds indefinitely)
+  - run_trade.py : the GitHub Actions job (approval is time-bounded, see below)
 """
 
 import os
+import asyncio
 
 from app.db.database import db_session
 from app.brokers.icici_breeze import ICICIBreezeClient
@@ -22,9 +27,16 @@ mock_broker = MockBroker(db_session, breeze_client)   # MockBroker uses the glob
 signal_svc = SignalService()
 strategy_svc = StrategyService(mock_broker, breeze_client)
 
+# How long to wait for the Telegram tap.
+#   Locally  : None = hold indefinitely (you're at the machine).
+#   In CI    : bounded, so the job can't camp on a GitHub runner until the 6-hour
+#              limit and burn the Actions quota. No tap -> no trade (safe default).
+IS_CI = os.getenv("GITHUB_ACTIONS") == "true"
+APPROVAL_TIMEOUT = int(os.getenv("APPROVAL_TIMEOUT_SECONDS", "900")) if IS_CI else None
+
 
 async def daily_trade_job():
-    print("--- [SCHEDULER] 9:15 AM: Running Options Selling Strategy ---")
+    print("--- [TRADE] Running Options Selling Strategy ---")
     from app.db.database import db_session
 
     try:
@@ -38,9 +50,16 @@ async def daily_trade_job():
 
         print(f"--- [SIGNAL] Today's Signal: {signal} - requesting approval ---")
 
-        # 2. HUMAN-IN-THE-LOOP: send Approve/Reject buttons and HOLD until you respond.
+        # 2. HUMAN-IN-THE-LOOP: send Approve/Reject buttons and wait for the tap.
         token = await send_approval_request(signal)
-        approved = await wait_for_approval(token, timeout_seconds=None)  # None = hold forever
+        try:
+            approved = await wait_for_approval(token, timeout_seconds=APPROVAL_TIMEOUT)
+        except asyncio.TimeoutError:
+            mins = (APPROVAL_TIMEOUT or 0) // 60
+            timeout_msg = f"No approval within {mins} min - trade skipped for safety."
+            print(timeout_msg)
+            send_telegram_msg(timeout_msg)
+            return
 
         if not approved:
             msg = f"Trade rejected. Signal {signal} was skipped."
@@ -83,10 +102,10 @@ async def daily_trade_job():
     except Exception as e:
         # Safety first: roll back any partial DB writes if execution fails.
         db_session.rollback()
-        error_report = f"Scheduler Error: {str(e)}"
+        error_report = f"Trade Job Error: {str(e)}"
         print(error_report)
         send_telegram_msg(error_report)
     finally:
         # Clean up the scoped session to prevent memory leaks in the background thread.
         db_session.remove()
-        print("--- [SCHEDULER] Job Cycle Complete ---")
+        print("--- [TRADE] Job Cycle Complete ---")
