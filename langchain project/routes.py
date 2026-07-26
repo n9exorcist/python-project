@@ -17,6 +17,27 @@ from observability import obs_handler
 
 DEFAULT_THREAD_ID = "market_analyst_session"
 
+# Overall-pipeline progress. Nodes REVISIT (the supervisor runs 2-3x per request),
+# so these are targets, not absolutes -- bump() below keeps the bar monotonic and
+# only lets the message change on a revisit.
+NODE_PROGRESS = {
+    "supervisor": (15, "Routing the question..."),
+    "researcher": (35, "Researcher reading internal records..."),
+    "web": (35, "Web agent searching..."),
+    "trading": (35, "Trading agent reading signals..."),
+    "writer": (80, "Composing the answer..."),
+    "reflect": (92, "Reviewing the answer..."),
+}
+
+# A tool reports its OWN 0-100. That is not overall progress -- emitting the tool's
+# 100 would pin the bar at 100 for the rest of the pipeline. Map it into a band.
+TOOL_BAND = (40, 72)
+
+
+def _tool_pct(inner: int) -> int:
+    lo, hi = TOOL_BAND
+    return int(lo + (max(0, min(100, inner)) / 100) * (hi - lo))
+
 router = APIRouter()
 
 
@@ -86,20 +107,28 @@ async def chat_stream(request: Request):
     async def event_generator():
         streamed_any = False
         writer_pass = 0
+        progress_floor = 0      # progress must never move backwards
+        node_visits = {}
+        # The graph is CYCLIC -- the supervisor and writer can each run several times --
+        # so a fixed pct per node makes the bar jump backwards (15 -> 40 -> 15). Clamp
+        # progress so it never decreases; the message still updates, which is the part
+        # that actually tells the user what's happening.
+        floor = 0
         obs_handler.begin_request()
         try:
-            # The tool map only covers tool calls. Between a tool finishing and the
-            # writer's first token there are several LLM calls whose tokens are
-            # filtered out of the stream -- without these, the bar freezes at 100/100
-            # for the whole thinking phase.
+            # ONE scale for the whole request. Tool progress is mapped INTO the
+            # specialist band below rather than being its own 0-100 -- two scales in
+            # one bar is what made the number jump (tool "complete" = 100, then the
+            # next node = 40).
             node_progress_map = {
-                "supervisor": (15, "Routing the question..."),
-                "researcher": (40, "Researcher reading internal records..."),
-                "web": (40, "Web agent analysing results..."),
-                "trading": (40, "Trading agent reading signals..."),
-                "writer": (85, "Composing the answer..."),
-                "reflect": (95, "Reviewing the answer..."),
+                "supervisor": (12, "Routing the question..."),
+                "researcher": (25, "Researcher reading internal records..."),
+                "web": (25, "Web agent searching..."),
+                "trading": (25, "Trading agent reading signals..."),
+                "writer": (80, "Composing the answer..."),
+                "reflect": (92, "Reviewing the answer..."),
             }
+            TOOL_BAND = (30, 70)   # a tool's own 0-100 maps into this slice of the request
 
             tool_progress_map = {
                 "mcp_search_the_web": [
@@ -142,16 +171,24 @@ async def chat_stream(request: Request):
 
                 if kind == "on_chain_start" and name in node_progress_map:
                     pct, msg = node_progress_map[name]
+                    pct = min(95, max(pct, floor))
+                    floor = pct
                     yield f"data: {json.dumps({'progress_percentage': pct, 'message': msg})}\n\n"
 
                 if kind == "on_tool_start":
                     steps = tool_progress_map.get(name, [(20, f"Running {name}...")])
                     for pct, msg in steps:
-                        yield f"data: {json.dumps({'progress_percentage': pct, 'message': msg})}\n\n"
+                        lo, hi = TOOL_BAND
+                        mapped = int(lo + (pct / 100) * (hi - lo))
+                        mapped = min(95, max(mapped, floor))
+                        floor = mapped
+                        yield f"data: {json.dumps({'progress_percentage': mapped, 'message': msg})}\n\n"
                         await asyncio.sleep(0.3)
 
                 elif kind == "on_tool_end":
-                    yield f"data: {json.dumps({'progress_percentage': 100, 'message': f'{name} complete.'})}\n\n"
+                    # Top of the TOOL band -- not 100. The tool is done; the request is not.
+                    floor = min(95, max(TOOL_BAND[1], floor))
+                    yield f"data: {json.dumps({'progress_percentage': floor, 'message': f'{name} complete.'})}\n\n"
 
                 elif kind == "on_chat_model_stream":
                     # Only stream the WRITER's tokens. The supervisor emits its

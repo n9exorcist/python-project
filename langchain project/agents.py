@@ -43,6 +43,7 @@ class GraphState(TypedDict, total=False):
     next_agent: str
     active_agent: str
     delegations: int
+    used_agents: list      # specialists already run THIS turn
     tool_rounds: int          # tool calls used by the current specialist visit
     final_answer: str
     reflection: str           # reviewer critique fed back to the writer
@@ -107,6 +108,7 @@ def make_entry_node(llm, use_llm_guard):
             "reflection": "",
             "reflection_verdict": "",
             "draft_id": "",
+            "used_agents": [],
         })
         return result
 
@@ -166,9 +168,23 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
                     decision = w
                     break
 
+        # Deterministic guard: a specialist that has already run this turn does not
+        # get re-asked. Without this the LLM re-delegates to the same specialist,
+        # which then re-answers from the SAME tool result -- four passes over a full
+        # Tavily dump cost 37k tokens and 184s for one question, with one tool call.
+        # It already gets MAX_TOOL_ROUNDS attempts inside its own visit.
+        used = list(state.get("used_agents", []))
+        if decision in used:
+            print(f"--- [SUPERVISOR] {decision} already ran this turn -> FINISH ---")
+            return {"next_agent": "FINISH", "delegations": delegations + 1}
+
+        if decision in WORKERS:
+            used.append(decision)
+
         print(f"--- [SUPERVISOR] -> {decision} (delegation {delegations}) ---")
         # Reset the per-specialist tool budget on each delegation.
-        return {"next_agent": decision, "delegations": delegations + 1, "tool_rounds": 0}
+        return {"next_agent": decision, "delegations": delegations + 1,
+                "tool_rounds": 0, "used_agents": used}
 
     def route_supervisor(state: GraphState) -> Literal["researcher", "web", "trading", "writer"]:
         nxt = state.get("next_agent", "FINISH")

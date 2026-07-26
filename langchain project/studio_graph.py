@@ -17,6 +17,7 @@ from langchain_groq import ChatGroq
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from agents import build_supervisor_graph
+from observability import obs_handler
 
 load_dotenv(find_dotenv())
 
@@ -27,6 +28,10 @@ llm = ChatGroq(
     model_name="llama-3.3-70b-versatile",
     temperature=0,
     api_key=os.getenv("GROQ_API_KEY"),
+    # Studio runs burn the same Groq quota as the app. Without this, they are
+    # invisible to the daily budget guard -- which is how the counter read 45%
+    # while Groq reported 99%.
+    callbacks=[obs_handler],
 )
 
 

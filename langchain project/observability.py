@@ -22,6 +22,15 @@ Outputs:
 
 Note: aggregates one active request at a time (fine for sequential eval runs and
 typical single-user chat). For concurrent load, track per run_id from callback kwargs.
+
+IMPORTANT -- what the daily counter can and cannot see:
+  It counts every call made through a ChatGroq object this handler is attached to,
+  across processes (the daily total lives in logs/token_usage_<date>.json). Attach it
+  in BOTH main.py and studio_graph.py, or `langgraph dev` traffic burns your quota
+  invisibly. It still cannot see:
+    - requests that FAIL (a 429 costs quota at Groq; on_llm_end never fires here)
+    - any process that builds its own LLM without this handler (e.g. evals/run_evals.py)
+  So Groq's own number is always the authoritative one; this is an early-warning gauge.
 """
 
 import os
@@ -52,6 +61,7 @@ def _today():
 class Observability(BaseCallbackHandler):
     def __init__(self):
         self._lock = threading.Lock()
+        self._seen_runs = set()
         self._reset_run()
 
     def _reset_run(self):
@@ -64,6 +74,19 @@ class Observability(BaseCallbackHandler):
 
     # ---------------- LLM ----------------
     def on_llm_end(self, response, **kwargs):
+        # This handler is attached BOTH to the ChatGroq object (so Studio / eval
+        # traffic counts toward the daily total) and to the graph config (so tool
+        # calls count). Both paths fire on_llm_end for the same call -- dedupe by
+        # run_id or every token gets counted twice.
+        run_id = kwargs.get("run_id")
+        if run_id is not None:
+            with self._lock:
+                if run_id in self._seen_runs:
+                    return
+                self._seen_runs.add(run_id)
+                if len(self._seen_runs) > 1000:
+                    self._seen_runs.clear()
+
         self.llm_calls += 1
         out = getattr(response, "llm_output", None) or {}
         usage = out.get("token_usage") or out.get("usage") or {}

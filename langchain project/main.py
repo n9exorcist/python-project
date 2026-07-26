@@ -26,6 +26,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from app.db.database import DB_PATH, init_db
 from agents import build_supervisor_graph
+from observability import obs_handler
 from trading import daily_trade_job
 from routes import router
 
@@ -57,6 +58,9 @@ async def lifespan(app: FastAPI):
             model_name="llama-3.3-70b-versatile",
             temperature=0,
             api_key=os.getenv("GROQ_API_KEY"),
+            # Attached to the LLM itself, not just the request config, so calls made
+            # by any caller (including LangGraph Studio) count toward the daily total.
+            callbacks=[obs_handler],
         )
 
         mcp_tools = []
