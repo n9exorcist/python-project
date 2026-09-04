@@ -93,19 +93,42 @@ def from_index(index: str = "nifty200", refresh: bool = False) -> list[str]:
     return []
 
 
-def resolve() -> list[str]:
-    """The universe this run should screen."""
-    raw = os.getenv("UNIVERSE", "").strip()
+def resolve_detailed() -> tuple[list[str], dict]:
+    """The universe this run should screen, plus a report of how it was chosen.
 
-    if raw and raw.lower() in INDEX_URLS:
+    UNIVERSE decides the mode:
+        "sector" / unset  -> the documented method: best-performing sector on
+                             the Moneycontrol board, then that sector's stocks
+        "sector:3"        -> the top 3 sectors instead of 1
+        "nifty200"        -> a whole index, ignoring sector strength
+        "ABC,DEF"         -> an explicit list
+
+    The report travels with the symbols so the Telegram message can name the
+    sector and say how many sessions the ranking rests on. A universe that came
+    back small must explain itself rather than look like a quiet market.
+    """
+    raw = os.getenv("UNIVERSE", "").strip()
+    report: dict = {}
+
+    if not raw or raw.lower().startswith("sector"):
+        top_n = 1
+        if ":" in raw:
+            try:
+                top_n = max(1, int(raw.split(":", 1)[1]))
+            except ValueError:
+                pass
+        import sectors  # local: pulls in nothing unless this mode is used
+        syms, report = sectors.resolve_universe(top_n=top_n)
+    elif raw.lower() in INDEX_URLS:
         syms = from_index(raw.lower())
-    elif raw:
-        syms = [s.strip() for s in raw.split(",") if s.strip()]
+        report = {"mode": "index", "index": raw.lower()}
     else:
-        syms = from_index("nifty200")
+        syms = [s.strip() for s in raw.split(",") if s.strip()]
+        report = {"mode": "explicit"}
 
     if not syms:
         print("[universe] no list resolved; using the starter set")
+        report.setdefault("errors", []).append("fell back to the starter set")
         syms = list(STARTER)
 
     # dedupe, drop the known-dead, preserve order
@@ -116,10 +139,18 @@ def resolve() -> list[str]:
             continue
         seen.add(u)
         out.append(u)
-    return out
+    return out, report
+
+
+def resolve() -> list[str]:
+    return resolve_detailed()[0]
 
 
 if __name__ == "__main__":
-    syms = resolve()
+    syms, rep = resolve_detailed()
     print(f"{len(syms)} symbols")
     print(", ".join(syms[:25]) + (" ..." if len(syms) > 25 else ""))
+    if rep.get("chosen"):
+        import sectors
+        print()
+        print(sectors.summary_line(rep))

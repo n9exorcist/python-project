@@ -31,11 +31,23 @@ TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # options job's live approval prompts. Falls back to the shared chat if unset.
 TG_CHAT = os.getenv("SWING_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
 
-# Nifty 200 by default. The old hardcoded 15 were all cables/electricals, so the
-# universe behaved as one position: when that sector pulled back, every name
-# failed on the same day and the screen went dark. $UNIVERSE still overrides,
-# with either an index name ("nifty500") or an explicit comma-separated list.
-UNIVERSE = universe.resolve()
+_UNIVERSE: list[str] | None = None
+_UNIVERSE_REPORT: dict = {}
+
+
+def get_universe(refresh: bool = False) -> list[str]:
+    """Resolved once per process, and never at import time.
+
+    The default mode picks the best-performing sector off the Moneycontrol board
+    and screens that sector's stocks — the documented method. Resolving it costs
+    two HTTP requests, which must not happen merely because something imported
+    this module: the dashboard, the analyst and the tests all do that and none
+    of them need a sector board.
+    """
+    global _UNIVERSE, _UNIVERSE_REPORT
+    if _UNIVERSE is None or refresh:
+        _UNIVERSE, _UNIVERSE_REPORT = universe.resolve_detailed()
+    return _UNIVERSE
 
 
 def notify(text: str) -> bool:
@@ -92,20 +104,35 @@ def _funnel_line(day: str, passed: int = 0) -> str:
     to a handful of names produce the same message.
 
     The count comes from the rejections actually recorded, not from
-    len(UNIVERSE) — those two can disagree (a symbol that raised before being
+    len(get_universe()) — those two can disagree (a symbol that raised before being
     classified, or a run made under a different universe), and when they do the
     discrepancy is itself worth seeing rather than papering over.
     """
     rejects = _scan_rejects(day)
     screened = sum(rejects.values()) + passed
     head = f"Screened {screened} symbols"
-    if screened != len(UNIVERSE):
-        head += f" (universe holds {len(UNIVERSE)})"
+    n_universe = len(get_universe())
+    if screened != n_universe:
+        head += f" (universe holds {n_universe})"
     if not rejects:
         return head + "."
     top = sorted(rejects.items(), key=lambda kv: -kv[1])[:4]
     detail = ", ".join(f"{r.replace('_', ' ')} {n}" for r, n in top)
     return f"{head}. Rejected by: {detail}."
+
+
+def _sector_line() -> str:
+    """Which sector this scan looked at, and how solid that pick is.
+
+    Step 1 of the method is the sector choice, so a scan report that omits it
+    hides the half of the decision that determined everything downstream.
+    Empty when the universe came from an index or an explicit list instead.
+    """
+    rep = _UNIVERSE_REPORT
+    if not rep or not rep.get("chosen"):
+        return ""
+    import sectors
+    return sectors.summary_line(rep)
 
 
 def _scan_rejects(day: str) -> dict[str, int]:
@@ -130,13 +157,14 @@ def _scan_rejects(day: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 def job_scan() -> None:
     today = date.today().isoformat()
-    cands = scan(UNIVERSE, _source(), db_path=DB_PATH)
+    syms = get_universe(refresh=True)
+    cands = scan(syms, _source(), db_path=DB_PATH)
 
     failed = _scan_rejects(today).get("fetch_error", 0)
-    degraded = failed >= max(1, int(len(UNIVERSE) * FETCH_FAIL_ALERT))
+    degraded = failed >= max(1, int(len(syms) * FETCH_FAIL_ALERT))
     if degraded:
         notify(
-            f"{today}: DATA PROBLEM — {failed} of {len(UNIVERSE)} symbols would "
+            f"{today}: DATA PROBLEM — {failed} of {len(syms)} symbols would "
             f"not fetch. Today's screen is incomplete; do not read it as "
             f"'no setups'. On a cloud runner this is usually the price source "
             f"rate-limiting the runner's IP."
@@ -148,19 +176,46 @@ def job_scan() -> None:
             # work. "No setups today" on its own is unreadable: it looks the same
             # whether the screen swept 200 names or quietly shrank to 13 because
             # the universe list failed to load. The size is the tell.
-            notify(f"{today}: no setups today.\n{_funnel_line(today)}")
+            sec = _sector_line()
+            notify(f"{today}: no setups today.\n{_funnel_line(today)}"
+                   + (f"\n{sec}" if sec else ""))
         return
 
     verdicts, notes = analyst.analyze(cands)
     takes = [v for v in verdicts if v.verdict == "take" and not v.event_within_21d]
 
-    lines = [f"SCAN {date.today()} — {len(cands)} of {len(UNIVERSE)} passed the screen", ""]
-    for v in verdicts:
-        flag = " [EVENT<21d]" if v.event_within_21d else ""
-        lines.append(f"{v.verdict.upper():6s} {v.symbol} — {v.pattern}{flag}")
-        lines.append(f"       {v.thesis}")
-        for r in v.risks:
-            lines.append(f"       risk: {r}")
+    # Every candidate is listed with its screen numbers, verdict or not. The
+    # analyst legitimately declines on thin days (MIN_CANDIDATES), and the
+    # earlier version printed only verdicts — so a day where exactly one name
+    # passed announced "1 of 8 passed the screen" and then named nothing at all.
+    # The screen's own numbers are the point; the analyst is commentary on top.
+    lines = [f"SCAN {date.today()} — {len(cands)} of {len(syms)} passed the screen"]
+    sec = _sector_line()
+    if sec:
+        lines.append(sec)
+    lines.append("")
+
+    verdict_by = {v.symbol: v for v in verdicts}
+    for c in cands:
+        v = verdict_by.get(c.symbol)
+        flag = " [EVENT<21d]" if (v and v.event_within_21d) else ""
+        head = f"{(v.verdict.upper() if v else 'SCREENED'):8s} {c.symbol}"
+        if v:
+            head += f" — {v.pattern}{flag}"
+        lines.append(head)
+        lines.append(
+            f"       {c.close} · RSI {c.rsi14} · vol x{c.vol_ratio} · "
+            f"{c.ext_pct:+.1f}% vs 20EMA · ATR {c.atr_pct}%"
+        )
+        if v:
+            lines.append(f"       {v.thesis}")
+            for r in v.risks:
+                lines.append(f"       risk: {r}")
+
+    # Say why the analyst is absent, so a screened-only list never reads as the
+    # analyst having silently failed.
+    if not verdicts and notes:
+        lines += ["", f"analyst skipped: {notes[0]}"]
     lines += ["", f"queued for tomorrow's open: {len(takes)}"]
     notify("\n".join(lines))
 
@@ -170,6 +225,20 @@ def job_scan() -> None:
                     "symbol TEXT, signal_date TEXT, atr REAL, "
                     "PRIMARY KEY (symbol, signal_date))")
         by_sym = {c.symbol: c for c in cands}
+
+        # Write every verdict back onto its signals row. Without this the column
+        # stays NULL forever and the dashboard reports "not analysed" for names
+        # the analyst has in fact just judged — and the reasoning is lost the
+        # moment the Telegram message scrolls away.
+        for v in verdicts:
+            c = by_sym.get(v.symbol)
+            if not c:
+                continue
+            con.execute(
+                "UPDATE signals SET llm_verdict=? WHERE symbol=? AND scan_date=?",
+                (v.verdict, v.symbol, c.scan_date),
+            )
+
         for v in takes:
             c = by_sym.get(v.symbol)
             if c:
@@ -262,5 +331,5 @@ if __name__ == "__main__":
         {"scan": job_scan, "fill": job_fill,
          "mark": job_mark, "report": job_report}[sys.argv[1]]()
     else:
-        print(f"scheduler up ({TZ}); universe = {len(UNIVERSE)} symbols")
+        print(f"scheduler up ({TZ}); universe = {len(get_universe())} symbols")
         build().start()

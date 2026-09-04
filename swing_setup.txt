@@ -1,0 +1,240 @@
+SWING SETUP · NSE SCREENED SUN 30 AUG 2026 DATA AS OF FRI 28 AUG CLOSE
+THE BEST -LOOKING CHARTON THE SCREEN IS THE ONEYOU CANNOT BUY .Electricals is the strongest sector on the one-month board. Three names inside it broke
+out on Friday. Only one of them is actually tradeable on Monday — and it is not the
+one that went up 20%.
+STEP 1
+PICK THE SECTOR
+The one-month sector board puts Electricals on top at +11.51%. That is the starting point, but the number
+alone is not the reason to go there. Three things underneath it matter more.
+SECTOR M.CAP
+4.31L Cr
+ADV / DECLINE
+45 / 26
+SECTOR PE
+71.51
+EARNINGS YOY
++51.07%
+WHY THIS SECTOR HOLDS UP
+Breadth, not one hero stock. 45 advancing against 26
+declining, and the sector day-map showed 47 green
+versus 25 red with nothing below −5%. A rally carried
+by two names is a headline; this one has participation.
+Earnings are moving with price. Sector earnings are
+up 51.07% year on year. When price and profit rise
+together the move has something under it. When only
+price rises, you are trading a story.
+THE TELL MOST PEOPLE MISS
+Look at the two ends of that board. Electricals
++11.51%. Power −4.11%. Those are neighbours — and
+they split hard.
+Money is going into companies that make the equipment
+— copper winding wire, cables, conductors — and out of
+companies that generate electricity. That is a
+transmission-and-distribution capex trade, not an energy
+trade. It tells you which shelf to pull stocks from:
+components, not utilities.
+The one caution. Sector PE is 71.51 — expensive. You are buying momentum backed by earnings growth, not
+value. That is a legitimate swing trade, but the downside on any disappointment is fast and deep. Size accordingly.
+STEP 2
+Electricals +11.51%
+Containers & Pack. +11.42%
+Metals & Mining +9.41%
+Ship Building +9.14%
+Miscellaneous +7.50%
+Diversified −1.33%
+Industrial Gases −2.61%
+Constr. Materials −3.44%
+Power −4.11%
+Footwear −5.41%
+SCREEN THE STOCKS
+Six names closed up on Friday. Run the filter — price above the 20/50/200 EMA, healthy RSI, volume
+expansion — then add the one almost nobody applies: how far above the 20 EMA has it already
+travelled? That number decides whether a stop can go anywhere sensible.
+STOCK CLOSE DAY % M.CAP CR PE PROFIT YOYREAD
+Precision Wires 507.35+20.00 9,27453.13 +71.5%Locked at circuit
+IKIO Tech 213.72+14.82 1,65135.50 +364.5%Tiny base; thin liquidity
+Dynamic Cables 487.60 +8.78 2,36225.91 +37.1%Cleanest structure
+Marine Electric 406.80 +8.74 5,62587.86 +51.0%PE 87.86, priced for perfection
+Universal Cable 1,693.20+5.34 5,87429.32 +108.2%Strong trend, extended
+Paramount Comm 62.37 +5.05 2,04033.53 +6.5%Green day, bearish trend
+Read the last row again. Paramount was up 5.05% and its own trend classification is still bearish. A green candle
+inside a downtrend is a bounce, not a breakout — and profit growth of 6.5% against a sector running at 51%
+confirms it. This is the most common way a swing screen goes wrong: you sort by day gain and buy a dead cat.
+Swing setup —Electricals —data as of 28 Aug 2026 2 / 6
+STEP 3
+THREE SETUPS, THREE VERDICTS
+Each rail is drawn to real price scale. Red is what you risk, green is what you play for. If red is wider than
+green, there is no trade — however good the chart looks.
+Dynamic CablesNSE : DYCL · 2,362 Cr · PE 25.91
+THE TRADE
+PATTERN · CUP WITH HANDLE — 20-MONTH BASE, BREAKING THE RIM
+RISK 6.4% REWARD 15.7% R:R 2.5 : 1
+WHY IT QUALIFIES
+It took out the 475 fifty-two-week high on 8.78%. That
+level was resistance for a year; hold it on a retest and
+it becomes the floor of the trade.
+The structure is a genuine cup: peak 546 in Dec 2024,
+trough 236.80, a twenty-month climb back. August's
+405–465 chop is the handle. That is the top-left
+pattern on your sheet, and the only one of the six
+forming it cleanly.
+Fundamentals agree. Q1 FY27 revenue +33.2% to 349
+Cr, PBT +37.4% to 33.5 Cr, margin 10.9% from 10.3%,
+order book about 811 Cr at end-June. At PE 25.91 it is
+the cheapest of the six against a sector on 71.51.
+HOW TO TAKE IT
+Entry 468–475 on retest
+Alt entry above 492 on volume
+Stop 442 (hard order)
+Invalidation 425 close
+Target 546 · all-time high
+Hold 2–5 weeks
+Wait for the retest. Buying the breakout at 492 gives
+2.5:1 at best. Buying the pullback to 470 with the
+same target gives closer to 3:1 for an identical thesis
+— about a third more on the same trade, for one week
+of patience.
+Verify first. Your Moneycontrol screen shows 487.60; NSE end-of-day data showed nearer 478.80. Confirm
+Friday's close and your own 20 EMA before placing anything — every level above moves with it.
+442stop
+472entry
+488Fri close
+546target
+Swing setup —Electricals —data as of 28 Aug 2026 3 / 6
+Precision Wires IndiaNSE : PRECWIRE · 9,274 Cr · PE 53.13
+DO NOT CHASE
+PATTERN · FLAGPOLE WITH NO FLAG YET — THE CONSOLIDATION HASN'T HAPPENED
+DISTANCE TO A SANE STOP: 15.2%
+EVERY FILTER YOU ASKED FOR PASSES
+Above 20 EMA yes · +17.9%
+Above 50 EMA yes · +23.3%
+Above 200 EMA yes · +48.1%
+EMA stack 20 > 50 > 200
+RSI (14) 68.73, rising
+Volume 8.56M
+52-week high new · 507.75
+Q1 profit +71.5% to 46.45 Cr on revenue +60.4% to
+1,770 Cr. The business is genuinely accelerating. This
+is a real leader.
+AND IT IS STILL UNTRADEABLE ON MONDAY
+It closed locked at the 20% upper circuit. There
+were no sellers. You cannot get a fill at a price you
+choose, and Monday opens with unquantifiable gap
+risk either way.
+The stop has nowhere to go. Nearest structural
+support is the 20 EMA at 430 — 15.2% below Friday's
+close. On a 1% risk rule that caps the position near
+6.5% of capital, and you would still wear a 15% loss
+on a normal retrace.
+A dated catalyst sits inside the window. An EGM
+on 5 September covers a 150 Cr convertible issue
+priced at 400 a share — 21% below Friday's close.
+That is a real overhang, landing mid-swing.
+Watchlist it instead. The play is not this move, it is the flag that forms after it. Let it base five to ten sessions.
+If it holds above 475 and then clears the high of that consolidation on rising volume, you get a stop under 455
+and a defensible 4–5% risk instead of 15%. Same stock, a quarter of the risk, one week later.
+Universal CablesNSE : UNIVCABLES · 5,874 Cr · PE 29.32
+WAIT FOR THE PULLBACK
+PATTERN · RISING CHANNEL, LATE STAGE — TREND INTACT, ENTRY GONE
+RISK 5.0% REWARD 18.8% ENTRY SITS BELOW CURRENT PRICE
+THE TREND IS GENUINE
+The sector's leadership stock all year — a 23-week cup
+breakout earlier in 2026 on three times the ten-week
+average volume, then a ladder of all-time highs: 1,447
+on 4 August, 1,675 on 10 August, 1,693 now.
+Earnings back it. Q1 net profit more than doubled,
++108.8% to 70.14 Cr, revenue rising three quarters
+running. Promoters hold 61.9%.
+WHY YOU DON'T ENTER HERE
+Up roughly 100% in a year and about 194% off its 52-
+week low of 576. Every buyer of the last twelve
+months is in profit, so every dip meets profit-taking
+before it meets new buyers.
+There is no support between Friday's close and the
+1,447–1,475 shelf. Entering at 1,693 means a stop
+13% away, or one so tight that noise removes you.
+The plan: alert at 1,530. If it pulls into 1,500–1,530
+and prints a reversal candle holding above 1,475, that
+is 5% risk for an 18.8% target. If it never pulls back,
+you miss it. Missing a trade costs nothing.
+343200 EMA
+41250 EMA
+43020 EMA
+475old high
+507Fri close
+1440stop
+1475shelf
+1515entry
+1693Fri close
+1800target
+Swing setup —Electricals —data as of 28 Aug 2026 4 / 6
+STEP 4
+SIZE THE POSITION
+Risk a fixed percentage of capital per trade — never a fixed rupee amount, never a fixed share count. The
+share count falls out of the stop distance. Below, at 1% risk per trade.
+SETUP ENTRY STOP RISK/SHARE SHARES @ 5L SHARES @ 10L SHARES @ 25L
+Dynamic Cables 472 442 30 166
+78,352 · 15.7%
+333
+1,57,176 · 15.7%
+833
+3,93,176 · 15.7%
+Universal Cables 1,5151,440 75 66
+99,990 · 20.0%
+133
+2,01,495 · 20.1%
+333
+5,04,495 · 20.2%
+Precision Wires (after flag) 475 455 20 250
+1,18,750 · 23.8%
+500
+2,37,500 · 23.8%
+1,250
+5,93,750 · 23.8%
+Second line under each share count is the position value and what share of capital it represents. Round down to what your
+liquidity comfort allows. Any position above 25% of capital should be cut — concentration risk is separate from stop-loss risk.
+The index is not helping you. Nifty is grinding in a tight 24,100–24,400 band with rising-trendline support near
+24,000–24,100; a decisive break opens 23,800–23,650. The benchmark is down roughly 8% for the calendar year
+while these small-caps are up 100%+. That is a narrow, momentum-led market: good for stock picking, dangerous
+for size. If Nifty closes below 24,000, halve every position above.
+STEP 5
+BEFORE YOU CLICK BUY
+REFERENCE
+WHICH PATTERN IS WHICH
+PATTERN LIVE EXAMPLE WHAT MAKES IT VALID
+Cup with handle Dynamic Cables Rim break on volume, then a shallow retest holding the rim
+Flag / pennant Precision Wires (pole
+only)
+A tight 5–10 session consolidation after the pole, on
+falling volume
+Sector still ranks top five on the one-month board at Monday's open.01
+The stock is not gapping more than 3% — a big gap means your entry no longer exists.02
+Breakout-day volume at least twice the twenty-day average.03
+EMAs stacked 20 > 50 > 200 and all three sloping up. Being above all three is not the same as them being
+in order.
+04
+Price within roughly 8% of the 20 EMA. Beyond that the stop is too far to size properly.05
+RSI between 55 and 72. Below 55 there is no momentum; above 75 you are late.06
+No earnings date, board meeting or EGM inside the holding window.07
+Stop-loss entered as a live order with the broker, not held in your head.08
+Total risk across all open swing positions under 4% of capital.09
+If any one of the above fails, the trade does not happen. There is another setup next week.10
+Swing setup —Electricals —data as of 28 Aug 2026 5 / 6
+PATTERN LIVE EXAMPLE WHAT MAKES IT VALID
+Ascending channel Universal Cables Buy the lower rail, not the upper; sell into the upper rail
+Descending channel
+bounce
+Paramount Comm Nothing — countertrend bounce, not a setup
+Head & shoulders none currently Neckline break, target measured head to neckline
+Most shapes on that sheet are one idea in different clothes: a contraction, then an expansion in the
+direction of the prevailing trend. What you are really screening for is the contraction — a tight range on
+falling volume, sitting above rising moving averages. The name you give the shape afterwards changes
+nothing about the entry, the stop, or the size.
+This is analysis, not advice. Not prepared by a registered investment adviser and not a recommendation to buy or sell any
+security. Every level here derives from screenshots and public data as of Friday 28 August 2026 and will have moved — confirm
+each price, EMA and volume figure on your own terminal before acting.
+Swing trading loses money for most people who try it. The stops above are the entire risk-management system; a setup taken
+without one is not the setup described here. Small-cap Electricals names carry circuit, liquidity and gap risk that a stop-loss
+order cannot always protect against.
+PREPARED 30 AUG 2026 · SOURCES: MONEYCONTROL SECTOR ANALYSIS, TRADINGVIEW, COMPANY FILINGS, EXCHANGE DATA
+Swing setup —Electricals —data as of 28 Aug 2026 6 / 6
