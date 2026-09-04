@@ -447,3 +447,421 @@
   border-radius: 4px;
   font-size: 11px;
 }
+
+/* --- sector board: diverging bars -------------------------------------- */
+/* Palette measured, not chosen by eye. Up #1baf7a / down #d03b3b clears
+   colourblind separation (ΔE 9.9 deuteranopia, target >= 8); plain green/red
+   failed at 4.1. #1baf7a is 2.82:1 on white, just under the 3:1 line, so the
+   relief rule applies — every bar carries a visible signed label, and position
+   either side of the baseline encodes the sign independently of colour. */
+.sw-div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px; /* 2px surface gap between adjacent fills */
+}
+
+.sw-div-head {
+  font-size: 12px;
+  font-weight: 650;
+  margin: 2px 0 8px;
+  letter-spacing: 0.01em;
+}
+.sw-div-head.up { color: #0f7a55; }
+.sw-div-head.down { color: #b02f2f; }
+.sw-div-head.plain {
+  color: #52514e;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.sw-div-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+.sw-div-row:hover { background: #fafbff; }
+.sw-div-row.is-chosen .sw-div-label { font-weight: 650; color: #0b0b0b; }
+
+.sw-div-label {
+  width: 132px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #52514e;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sw-div-plot {
+  position: relative;
+  flex: 1;
+  height: 18px;
+  min-width: 120px;
+}
+
+/* recessive baseline, not a competing mark */
+.sw-div-axis {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #c3c2b7;
+}
+
+.sw-div-fill {
+  position: absolute;
+  top: 4px;
+  height: 10px;
+  min-width: 2px;
+}
+/* 4px rounded data-end, square against the baseline */
+.sw-div-fill.up {
+  background: #1baf7a;
+  border-radius: 0 4px 4px 0;
+}
+.sw-div-fill.down {
+  background: #d03b3b;
+  border-radius: 4px 0 0 4px;
+}
+
+/* Direct label on every bar — this is the relief the contrast WARN requires,
+   and it is what keeps the sign readable without colour. Its own fixed column,
+   so the longest bar cannot push it out of the plot. */
+.sw-div-value {
+  width: 62px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #52514e;
+}
+
+.sw-grid-2.tight { gap: 22px; }
+
+.sw-chosen {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.sw-chosen-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+@media (max-width: 700px) {
+  .sw-chosen-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
+.sw-chosen-stats > div {
+  background: #fcfcfb;
+  border: 1px solid #f3f4f6;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sw-chosen-stats span {
+  font-size: 11px;
+  color: #898781;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sw-chosen-stats b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-note.warnbox {
+  background: #fffbeb;
+  border-left: 3px solid #fab219;
+  padding: 9px 12px;
+  border-radius: 0 8px 8px 0;
+  color: #52514e;
+}
+
+/* hover layer */
+.sw-tip {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 6px 24px rgba(16, 24, 40, 0.12);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+  z-index: 40;
+  pointer-events: none;
+  max-width: 320px;
+}
+.sw-tip b { font-size: 13.5px; }
+
+/* A diverging row needs 132 + 120 + 62 + 20px of gaps = 334px. Narrower than
+   that and the label column gets pushed out of the card, so the name column
+   gives way first — the bar and its value are the parts carrying meaning. */
+@media (max-width: 460px) {
+  .sw-div-label { width: 84px; font-size: 11.5px; }
+  .sw-div-plot { min-width: 90px; }
+  .sw-div-value { width: 56px; }
+}
+
+/* --- tracker: tabs, log form, trade cards ------------------------------- */
+.sw-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.sw-tab {
+  border: none;
+  background: transparent;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #898781;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.sw-tab:hover { color: #52514e; }
+.sw-tab.active {
+  color: #0b0b0b;
+  border-bottom-color: #0b0b0b;
+}
+.sw-tab em {
+  font-style: normal;
+  font-weight: 600;
+  color: #898781;
+  margin-left: 3px;
+}
+.sw-tab.active em { color: #1baf7a; }
+
+.sw-logform {
+  background: #fcfcfb;
+  border: 1px solid #f3f4f6;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.sw-logform-title {
+  font-size: 14px;
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+.sw-logform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sw-logform-grid label.wide { grid-column: 1 / -1; }
+.sw-logform-grid label,
+.sw-trade-actions label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sw-logform-grid span,
+.sw-trade-actions span {
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #898781;
+}
+.sw-logform-grid input,
+.sw-trade-actions input {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #ffffff;
+  color: #0b0b0b;
+  width: 100%;
+}
+.sw-logform-grid input:focus,
+.sw-trade-actions input:focus {
+  outline: none;
+  border-color: #2a78d6;
+  box-shadow: 0 0 0 3px rgba(42, 120, 214, 0.12);
+}
+
+.sw-btn.primary {
+  background: #0b0b0b;
+  color: #ffffff;
+  border-color: #0b0b0b;
+}
+.sw-btn.primary:hover:not(:disabled) { background: #262626; }
+.sw-btn.ok { color: #0f7a55; border-color: #b7e3d1; }
+.sw-btn.ok:hover:not(:disabled) { background: #ecfdf5; }
+.sw-btn.warn { color: #b45309; border-color: #fde68a; }
+.sw-btn.warn:hover:not(:disabled) { background: #fffbeb; }
+.sw-btn.danger { color: #b02f2f; border-color: #f3c7c7; }
+.sw-btn.danger:hover:not(:disabled) { background: #fef2f2; }
+
+/* --- one trade / watch card --- */
+.sw-trade {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px 18px 14px;
+  margin-bottom: 12px;
+  background: #ffffff;
+}
+.sw-trade.skipped { opacity: 0.72; }
+
+.sw-trade-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.sw-trade-head h3 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.sw-trade-sub {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  color: #898781;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.sw-status {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 5px 10px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.sw-status.watching { background: #7a5c00; color: #ffffff; }
+.sw-status.triggered, .sw-status.open { background: #0f7a55; color: #ffffff; }
+.sw-status.skipped { background: #898781; color: #ffffff; }
+
+/* --- the price rail --- */
+.sw-rail { margin: 4px 0 30px; }
+.sw-rail-track {
+  position: relative;
+  height: 16px;
+  background: #eceae4;
+  border-radius: 3px;
+}
+.sw-rail-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+/* risk below entry, reward above it — drawn to scale, so a thin reward band
+   next to a fat risk band is visible before the R:R number is read */
+.sw-rail-band.risk { background: #c98c8c; }
+.sw-rail-band.reward { background: #8fb9a6; }
+
+.sw-rail-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 1px;
+}
+.sw-rail-tick.stop { background: #b02f2f; }
+.sw-rail-tick.entry { background: #0b0b0b; }
+.sw-rail-tick.target { background: #0f7a55; }
+/* the live price: taller and darkest, it is the only moving mark */
+.sw-rail-tick.mark {
+  background: #0b0b0b;
+  width: 4px;
+  margin-left: -2px;
+  top: -7px;
+  bottom: -7px;
+}
+
+.sw-rail-labels { position: relative; height: 26px; margin-top: 8px; }
+.sw-rail-lab {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.sw-rail-lab b { font-size: 12px; font-variant-numeric: tabular-nums; }
+.sw-rail-lab i {
+  font-style: normal;
+  font-size: 10.5px;
+  color: #898781;
+  letter-spacing: 0.03em;
+}
+.sw-rail-lab.stop b { color: #b02f2f; }
+.sw-rail-lab.target b { color: #0f7a55; }
+
+.sw-rail-empty {
+  font-size: 12.5px;
+  color: #898781;
+  background: #f9fafb;
+  border: 1px dashed #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 4px 0 12px;
+}
+
+.sw-minis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.sw-mini { display: flex; flex-direction: column; gap: 2px; }
+.sw-mini span {
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #898781;
+}
+.sw-mini b { font-size: 15px; font-variant-numeric: tabular-nums; }
+
+.sw-trade-note {
+  font-size: 13px;
+  color: #52514e;
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+
+.sw-trade-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid #f3f4f6;
+}
+.sw-trade-actions label { width: 118px; }
+
+.sw-trade-stamp {
+  font-size: 10.5px;
+  color: #a9a79f;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin: 10px 0 0;
+}

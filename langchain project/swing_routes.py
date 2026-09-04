@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 import paper_broker as pb
 
@@ -177,6 +178,55 @@ def _books(con: sqlite3.Connection) -> dict[str, Any]:
     return {"FIXED": fixed, "STRUCTURAL": structural, "verdict": verdict}
 
 
+def _sectors(con: sqlite3.Connection, top: int = 5) -> dict[str, Any]:
+    """The sector board and the chosen sector's constituents, from SQLite only.
+
+    Step 1 of the method is the sector choice, so the dashboard has to show it —
+    otherwise the page reports which stocks passed without ever saying where it
+    was looking, which is the half of the decision that determined the rest.
+    """
+    empty = {"day": None, "leaders": [], "laggards": [], "chosen": None,
+             "stocks": [], "sessions": 0}
+    if not _table_exists(con, "sector_board"):
+        return empty
+
+    row = con.execute("SELECT MAX(day) FROM sector_board").fetchone()
+    day = row[0] if row else None
+    if not day:
+        return empty
+
+    sessions = con.execute(
+        "SELECT COUNT(DISTINCT day) FROM sector_board").fetchone()[0]
+
+    board = [dict(r) for r in con.execute(
+        "SELECT sector, slug, chg_pct, advance, decline, sector_pe, np_yoy_pct, "
+        "stock_cnt FROM sector_board WHERE day=? ORDER BY chg_pct DESC", (day,))]
+
+    chosen = board[0] if board else None
+    stocks: list[dict[str, Any]] = []
+    if chosen and _table_exists(con, "sector_stocks"):
+        passed = set()
+        if _table_exists(con, "signals"):
+            passed = {r[0] for r in con.execute(
+                "SELECT symbol FROM signals WHERE scan_date=?", (day,))}
+        for r in con.execute(
+            "SELECT symbol, mc_name, chg_pct, tech_trend, pe FROM sector_stocks "
+            "WHERE day=? AND slug=? ORDER BY chg_pct DESC", (day, chosen["slug"])
+        ):
+            d = dict(r)
+            d["passed_screen"] = d["symbol"] in passed
+            stocks.append(d)
+
+    return {
+        "day": day,
+        "sessions": sessions,
+        "leaders": board[:top],
+        "laggards": list(reversed(board[-top:])) if len(board) > top else [],
+        "chosen": chosen,
+        "stocks": stocks,
+    }
+
+
 def _tokens(con: sqlite3.Connection, day: str, pinned: bool = False) -> dict[str, Any]:
     """Spend for `day`. When the caller did not pin a date and today has no rows
     yet, fall back to the most recent day that does — an empty card on a quiet
@@ -231,6 +281,155 @@ def _tokens(con: sqlite3.Connection, day: str, pinned: bool = False) -> dict[str
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Watchlist — the one thing on this page you own and may write.
+#
+# Deliberately NOT paper_positions. The paper books answer "would the rules have
+# worked?" and only the scheduler writes them; the watchlist answers "what did I
+# flag, and what did I do about it?". Keeping them apart is the point of the
+# Skipped tab: if the names you skip outperform the ones you take, the problem is
+# your trigger, not the screen — and you can only see that if the two are
+# recorded separately.
+# ---------------------------------------------------------------------------
+WATCHLIST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS watchlist (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol      TEXT NOT NULL,
+    pattern     TEXT,
+    entry       REAL,
+    stop        REAL,
+    target      REAL,
+    flagged     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'watching',   -- watching | triggered | skipped
+    note        TEXT,
+    mark        REAL,
+    shares      INTEGER,
+    entry_date  TEXT,
+    updated_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_wl_status ON watchlist(status);
+"""
+
+STATUSES = ("watching", "triggered", "skipped")
+
+
+class WatchIn(BaseModel):
+    symbol: str
+    pattern: str | None = None
+    entry: float | None = None
+    stop: float | None = None
+    target: float | None = None
+    flagged: str | None = None
+    note: str | None = None
+
+
+class WatchPatch(BaseModel):
+    status: str | None = None
+    mark: float | None = None
+    shares: int | None = None
+    note: str | None = None
+    entry: float | None = None
+    stop: float | None = None
+    target: float | None = None
+    pattern: str | None = None
+
+
+def _wl_con() -> sqlite3.Connection:
+    con = _con()
+    con.executescript(WATCHLIST_SCHEMA)
+    return con
+
+
+def _wl_row(r: sqlite3.Row) -> dict[str, Any]:
+    d = dict(r)
+    entry, stop, mark = d.get("entry"), d.get("stop"), d.get("mark")
+    risk = (entry - stop) if (entry is not None and stop is not None) else None
+    d["risk"] = round(risk, 2) if risk else None
+    d["r_now"] = (round((mark - entry) / risk, 2)
+                  if (risk and mark is not None and risk > 0) else None)
+    d["rr_planned"] = (round((d["target"] - entry) / risk, 2)
+                       if (risk and d.get("target") is not None and risk > 0) else None)
+    return d
+
+
+@router.get("/watchlist")
+def watchlist() -> dict[str, Any]:
+    con = _wl_con()
+    try:
+        rows = [_wl_row(r) for r in con.execute(
+            "SELECT * FROM watchlist ORDER BY flagged DESC, id DESC")]
+    finally:
+        con.close()
+    return {
+        "rows": rows,
+        "counts": {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES},
+    }
+
+
+@router.post("/watchlist")
+def watchlist_add(item: WatchIn) -> dict[str, Any]:
+    sym = (item.symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(400, "symbol is required")
+    now = datetime.now().isoformat(timespec="seconds")
+    con = _wl_con()
+    try:
+        cur = con.execute(
+            "INSERT INTO watchlist (symbol,pattern,entry,stop,target,flagged,note,"
+            "status,updated_at) VALUES (?,?,?,?,?,?,?,'watching',?)",
+            (sym, item.pattern, item.entry, item.stop, item.target,
+             item.flagged or date.today().isoformat(), item.note, now),
+        )
+        con.commit()
+        row = con.execute("SELECT * FROM watchlist WHERE id=?",
+                          (cur.lastrowid,)).fetchone()
+        return _wl_row(row)
+    finally:
+        con.close()
+
+
+@router.patch("/watchlist/{item_id}")
+def watchlist_patch(item_id: int, patch: WatchPatch) -> dict[str, Any]:
+    fields = {k: v for k, v in patch.model_dump(exclude_unset=True).items()
+              if v is not None}
+    if patch.status is not None and patch.status not in STATUSES:
+        raise HTTPException(400, f"status must be one of {STATUSES}")
+    if not fields:
+        raise HTTPException(400, "nothing to update")
+
+    # Recording that you actually took it is what makes the Skipped comparison
+    # meaningful later, so stamp the date the moment the status says triggered.
+    if fields.get("status") == "triggered":
+        fields.setdefault("entry_date", date.today().isoformat())
+    fields["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+    con = _wl_con()
+    try:
+        if not con.execute("SELECT 1 FROM watchlist WHERE id=?", (item_id,)).fetchone():
+            raise HTTPException(404, f"no watchlist item {item_id}")
+        sets = ", ".join(f"{k}=?" for k in fields)
+        con.execute(f"UPDATE watchlist SET {sets} WHERE id=?",
+                    [*fields.values(), item_id])
+        con.commit()
+        return _wl_row(con.execute("SELECT * FROM watchlist WHERE id=?",
+                                   (item_id,)).fetchone())
+    finally:
+        con.close()
+
+
+@router.delete("/watchlist/{item_id}")
+def watchlist_delete(item_id: int) -> dict[str, Any]:
+    con = _wl_con()
+    try:
+        cur = con.execute("DELETE FROM watchlist WHERE id=?", (item_id,))
+        con.commit()
+        if not cur.rowcount:
+            raise HTTPException(404, f"no watchlist item {item_id}")
+        return {"deleted": item_id}
+    finally:
+        con.close()
+
+
 @router.get("/dashboard")
 def dashboard(day: str | None = None) -> dict[str, Any]:
     """Everything the page needs, in one round trip, straight from SQLite."""
@@ -241,6 +440,7 @@ def dashboard(day: str | None = None) -> dict[str, Any]:
         return {
             "db_path": DB_PATH,
             "today": date.today().isoformat(),
+            "sectors": _sectors(con),
             "scan": _latest_scan(con),
             "funnel": _funnel(con),
             "positions": _positions(con),

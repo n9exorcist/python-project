@@ -64,6 +64,250 @@ function Bar({ pct, tone = "brand" }) {
   );
 }
 
+/* Diverging bars around a zero baseline.
+
+   Colour carries the sign, but never alone: the bar sits left or right of the
+   baseline and every bar is directly labelled with a signed value. That matters
+   twice over — the up-colour (#1baf7a) sits just under 3:1 on white, and its
+   pair with the down-colour clears colourblind separation (ΔE 9.9 deuteranopia)
+   only because these secondary cues are present. Both were measured, not
+   eyeballed; plain green/red failed at ΔE 4.1 and is not used. */
+function DivergingRows({ rows, onHover, scaleMax }) {
+  // Callers that render two panels side by side MUST pass a shared scaleMax.
+  // Letting each panel scale to its own extreme makes a -3.02% laggard and a
+  // +2.14% leader draw identical-length bars, so the reader compares two
+  // different rulers laid next to each other and cannot see which move is
+  // bigger — the one thing the chart exists to show.
+  const max = scaleMax || Math.max(...rows.map((r) => Math.abs(r.value)), 0.01);
+  return (
+    <div className="sw-div">
+      {rows.map((r) => {
+        const up = r.value >= 0;
+        const w = (Math.abs(r.value) / max) * 50; // half-width each side
+        return (
+          <div
+            className={`sw-div-row${r.highlight ? " is-chosen" : ""}`}
+            key={r.key}
+            onMouseEnter={(e) => onHover && onHover(r, e)}
+            onMouseLeave={() => onHover && onHover(null)}
+          >
+            <span className="sw-div-label" title={r.label}>
+              {r.label}
+            </span>
+            <div className="sw-div-plot">
+              <span className="sw-div-axis" />
+              <span
+                className={`sw-div-fill ${up ? "up" : "down"}`}
+                style={up ? { left: "50%", width: `${w}%` }
+                          : { right: "50%", width: `${w}%` }}
+              />
+            </div>
+            {/* The label lives in its own column rather than floating at the
+                bar's end. Anchored to the end, the longest bar in every group
+                sits at exactly 100% of the plot, so its label always spilled
+                outside — and the longest bar is the top sector, the one row
+                that must be readable. */}
+            <span className={`sw-div-value ${signClass(r.value)}`}>
+              {up ? "+" : "−"}
+              {Math.abs(r.value).toFixed(2)}%
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* The price rail: one row that answers "where is this now, between the two
+   prices that end the trade?".
+
+   Domain runs from the lowest of stop/mark to the highest of target/mark, so a
+   price that has run past the target or broken the stop still lands on the rail
+   instead of being clipped to the end and silently misreporting. The risk band
+   (stop -> entry) and reward band (entry -> target) are drawn to scale, which is
+   what makes a poor reward:risk look wrong rather than merely read wrong. */
+function PriceRail({ stop, entry, target, mark }) {
+  const known = [stop, entry, target, mark].filter(
+    (v) => v !== null && v !== undefined && !Number.isNaN(v),
+  );
+  if (known.length < 2 || stop == null || entry == null || target == null) {
+    return <div className="sw-rail-empty">levels not set</div>;
+  }
+  const lo = Math.min(...known);
+  const hi = Math.max(...known);
+  const pad = (hi - lo) * 0.06 || 1;
+  const d0 = lo - pad;
+  const d1 = hi + pad;
+  const at = (v) => ((v - d0) / (d1 - d0)) * 100;
+
+  const ticks = [
+    { v: stop, cls: "stop", label: "stop" },
+    { v: entry, cls: "entry", label: "entry" },
+    { v: target, cls: "target", label: "target" },
+  ];
+
+  return (
+    <div className="sw-rail">
+      <div className="sw-rail-track">
+        <span
+          className="sw-rail-band risk"
+          style={{ left: `${at(stop)}%`, width: `${at(entry) - at(stop)}%` }}
+        />
+        <span
+          className="sw-rail-band reward"
+          style={{ left: `${at(entry)}%`, width: `${at(target) - at(entry)}%` }}
+        />
+        {ticks.map((t) => (
+          <span
+            key={t.label}
+            className={`sw-rail-tick ${t.cls}`}
+            style={{ left: `${at(t.v)}%` }}
+          />
+        ))}
+        {mark != null ? (
+          <span className="sw-rail-tick mark" style={{ left: `${at(mark)}%` }} />
+        ) : null}
+      </div>
+      <div className="sw-rail-labels">
+        {ticks.map((t) => (
+          <span
+            key={t.label}
+            className={`sw-rail-lab ${t.cls}`}
+            style={{ left: `${at(t.v)}%` }}
+          >
+            <b>{fmtNum(t.v, 0)}</b>
+            <i>{t.label}</i>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, cls = "" }) {
+  return (
+    <div className="sw-mini">
+      <span>{label}</span>
+      <b className={cls}>{value}</b>
+    </div>
+  );
+}
+
+/* One watchlist name. Mirrors an open position's layout deliberately: the same
+   rail, the same four numbers, so a name you are watching and a name you took
+   are read the same way and can be compared without re-reading the legend. */
+function WatchCard({ item, onPatch, onDelete }) {
+  const [mark, setMark] = React.useState(
+    item.mark === null || item.mark === undefined ? "" : String(item.mark),
+  );
+  const [shares, setShares] = React.useState(
+    item.shares === null || item.shares === undefined ? "" : String(item.shares),
+  );
+
+  const commitMark = () => {
+    const v = mark === "" ? null : Number(mark);
+    if (v !== null && !Number.isNaN(v) && v !== item.mark) onPatch(item.id, { mark: v });
+  };
+  const commitShares = () => {
+    const v = shares === "" ? null : parseInt(shares, 10);
+    if (v !== null && !Number.isNaN(v) && v !== item.shares)
+      onPatch(item.id, { shares: v });
+  };
+
+  const status = item.status || "watching";
+  return (
+    <div className={`sw-trade ${status}`}>
+      <div className="sw-trade-head">
+        <div>
+          <h3>{item.symbol}</h3>
+          <p className="sw-trade-sub">
+            {item.pattern ? `${item.pattern} · ` : ""}flagged {item.flagged}
+            {item.entry_date ? ` · taken ${item.entry_date}` : ""}
+          </p>
+        </div>
+        <span className={`sw-status ${status}`}>{status.toUpperCase()}</span>
+      </div>
+
+      <PriceRail
+        stop={item.stop}
+        entry={item.entry}
+        target={item.target}
+        mark={item.mark}
+      />
+
+      <div className="sw-minis">
+        <Stat
+          label="Last mark"
+          value={item.mark != null ? `₹${fmtNum(item.mark)}` : "—"}
+        />
+        <Stat
+          label="R now"
+          value={item.r_now != null ? fmtR(item.r_now) : "—"}
+          cls={signClass(item.r_now)}
+        />
+        <Stat label="1R" value={item.risk != null ? `₹${fmtNum(item.risk)}` : "—"} />
+        <Stat
+          label="Planned R:R"
+          value={item.rr_planned != null ? `${fmtNum(item.rr_planned)} : 1` : "—"}
+        />
+      </div>
+
+      {item.note ? <p className="sw-trade-note">{item.note}</p> : null}
+
+      <div className="sw-trade-actions">
+        <label>
+          <span>Mark price</span>
+          <input
+            type="number"
+            step="any"
+            value={mark}
+            onChange={(e) => setMark(e.target.value)}
+            onBlur={commitMark}
+          />
+        </label>
+        <label>
+          <span>Shares</span>
+          <input
+            type="number"
+            value={shares}
+            onChange={(e) => setShares(e.target.value)}
+            onBlur={commitShares}
+          />
+        </label>
+        {status !== "triggered" ? (
+          <button
+            className="sw-btn ok"
+            onClick={() => onPatch(item.id, { status: "triggered" })}
+          >
+            Entry triggered
+          </button>
+        ) : null}
+        {status !== "skipped" ? (
+          <button
+            className="sw-btn warn"
+            onClick={() => onPatch(item.id, { status: "skipped" })}
+          >
+            Skip it
+          </button>
+        ) : (
+          <button
+            className="sw-btn"
+            onClick={() => onPatch(item.id, { status: "watching" })}
+          >
+            Un-skip
+          </button>
+        )}
+        <button className="sw-btn danger" onClick={() => onDelete(item.id)}>
+          Delete
+        </button>
+      </div>
+      {item.updated_at ? (
+        <p className="sw-trade-stamp">marked {item.updated_at.slice(0, 10)}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export default function SwingDashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -71,6 +315,14 @@ export default function SwingDashboard() {
   const [marks, setMarks] = useState(null);
   const [marksLoading, setMarksLoading] = useState(false);
   const [marksError, setMarksError] = useState(null);
+  const [tip, setTip] = useState(null);
+  const [wl, setWl] = useState({ rows: [], counts: {} });
+  const [tab, setTab] = useState("watchlist");
+  const [form, setForm] = useState({
+    symbol: "", pattern: "", entry: "", stop: "", target: "",
+    flagged: new Date().toISOString().slice(0, 10), note: "",
+  });
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
@@ -86,11 +338,67 @@ export default function SwingDashboard() {
     }
   }, []);
 
+  const loadWatchlist = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/swing/watchlist`);
+      if (res.ok) setWl(await res.json());
+    } catch {
+      /* the dashboard itself already reports an unreachable API */
+    }
+  }, []);
+
   useEffect(() => {
     load(true);
-    const id = setInterval(() => load(false), POLL_MS);
+    loadWatchlist();
+    const id = setInterval(() => {
+      load(false);
+      loadWatchlist();
+    }, POLL_MS);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, loadWatchlist]);
+
+  const addWatch = async (e) => {
+    e.preventDefault();
+    if (!form.symbol.trim() || busy) return;
+    setBusy(true);
+    try {
+      const body = { ...form };
+      // Empty inputs must arrive as null, not "" — a blank price is "unknown",
+      // and 0 would draw a rail anchored at zero.
+      ["entry", "stop", "target"].forEach((k) => {
+        body[k] = body[k] === "" ? null : Number(body[k]);
+      });
+      const res = await fetch(`${API_BASE}/swing/watchlist`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setForm({
+          symbol: "", pattern: "", entry: "", stop: "", target: "",
+          flagged: new Date().toISOString().slice(0, 10), note: "",
+        });
+        await loadWatchlist();
+        setTab("watchlist");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const patchWatch = async (id, patch) => {
+    await fetch(`${API_BASE}/swing/watchlist/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    loadWatchlist();
+  };
+
+  const removeWatch = async (id) => {
+    await fetch(`${API_BASE}/swing/watchlist/${id}`, { method: "DELETE" });
+    loadWatchlist();
+  };
 
   const fetchMarks = async () => {
     setMarksLoading(true);
@@ -133,8 +441,21 @@ export default function SwingDashboard() {
     );
   }
 
-  const { scan, funnel, positions, closed, books, tokens, today } = data;
+  const { scan, funnel, positions, closed, books, tokens, today, sectors } = data;
   const markBySym = new Map((marks || []).map((m) => [`${m.book}:${m.id}`, m]));
+
+  // One ruler across both sector panels.
+  const sectorScale = sectors
+    ? Math.max(
+        ...[...(sectors.leaders || []), ...(sectors.laggards || [])].map((r) =>
+          Math.abs(r.chg_pct || 0),
+        ),
+        0.01,
+      )
+    : 0.01;
+
+  const watching = (wl.rows || []).filter((r) => r.status !== "skipped");
+  const skipped = (wl.rows || []).filter((r) => r.status === "skipped");
 
   const fixed = books.FIXED || {};
   const structural = books.STRUCTURAL || {};
@@ -163,6 +484,113 @@ export default function SwingDashboard() {
           </button>
         </div>
       </header>
+
+      {/* ---------------- Step 1: the sector ---------------- */}
+      {sectors && sectors.day ? (
+        <Card
+          title="Sector board"
+          subtitle={
+            sectors.sessions < 5
+              ? `${sectors.day} · ranked on ${sectors.sessions} session${sectors.sessions === 1 ? "" : "s"} — too thin to call a trend yet`
+              : `${sectors.day} · ranked over ${sectors.sessions} sessions`
+          }
+          right={
+            sectors.chosen ? (
+              <span className="sw-count">screening {sectors.chosen.sector}</span>
+            ) : null
+          }
+        >
+          <div className="sw-grid-2 tight">
+            <div>
+              <div className="sw-div-head up">↑ Top performing</div>
+              <DivergingRows
+                onHover={setTip}
+                scaleMax={sectorScale}
+                rows={sectors.leaders.map((r) => ({
+                  key: r.slug,
+                  label: r.sector,
+                  value: r.chg_pct ?? 0,
+                  highlight: sectors.chosen && r.slug === sectors.chosen.slug,
+                  meta: r,
+                }))}
+              />
+            </div>
+            <div>
+              <div className="sw-div-head down">↓ Under performing</div>
+              <DivergingRows
+                onHover={setTip}
+                scaleMax={sectorScale}
+                rows={sectors.laggards.map((r) => ({
+                  key: r.slug,
+                  label: r.sector,
+                  value: r.chg_pct ?? 0,
+                  meta: r,
+                }))}
+              />
+            </div>
+          </div>
+
+          {sectors.chosen ? (
+            <div className="sw-chosen">
+              <div className="sw-chosen-stats">
+                <div>
+                  <span>Breadth</span>
+                  <b
+                    className={
+                      sectors.chosen.advance > sectors.chosen.decline ? "pos" : "neg"
+                    }
+                  >
+                    {sectors.chosen.advance} / {sectors.chosen.decline}
+                  </b>
+                </div>
+                <div>
+                  <span>Sector PE</span>
+                  <b>{fmtNum(sectors.chosen.sector_pe, 1)}</b>
+                </div>
+                <div>
+                  <span>Earnings YoY</span>
+                  <b className={signClass(sectors.chosen.np_yoy_pct)}>
+                    {fmtNum(sectors.chosen.np_yoy_pct, 1)}%
+                  </b>
+                </div>
+                <div>
+                  <span>Constituents</span>
+                  <b>{sectors.chosen.stock_cnt}</b>
+                </div>
+              </div>
+              {sectors.chosen.advance <= sectors.chosen.decline ? (
+                <p className="sw-note warnbox">
+                  Breadth is negative — more constituents fell than rose. A sector
+                  leading on one day without breadth behind it is a headline, not
+                  participation.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {sectors.stocks.length > 0 ? (
+            <>
+              <div className="sw-div-head plain">
+                {sectors.chosen.sector} constituents — day move
+              </div>
+              <DivergingRows
+                onHover={setTip}
+                rows={sectors.stocks.map((s) => ({
+                  key: s.symbol,
+                  label: `${s.symbol}${s.passed_screen ? "  ✔" : ""}`,
+                  value: s.chg_pct ?? 0,
+                  highlight: s.passed_screen,
+                  meta: s,
+                }))}
+              />
+              <p className="sw-note">
+                ✔ marks the names that cleared the technical screen. A big day move
+                is not the signal — the screen is.
+              </p>
+            </>
+          ) : null}
+        </Card>
+      ) : null}
 
       {/* ---------------- Today's scan + verdicts ---------------- */}
       <Card
@@ -232,10 +660,10 @@ export default function SwingDashboard() {
         )}
       </Card>
 
-      {/* ---------------- Open positions ---------------- */}
+      {/* ---------------- Tracker: watchlist / open / closed / skipped ------ */}
       <Card
-        title="Open positions"
-        subtitle="The same signal is opened in both books at the same fill, so the difference between them is the risk framing and nothing else."
+        title="Tracker"
+        subtitle="The watchlist is yours to edit. Open and closed trades belong to the scheduler's paper books — this page never writes to them."
         right={
           <button
             className="sw-btn"
@@ -246,71 +674,192 @@ export default function SwingDashboard() {
           </button>
         }
       >
-        {positions.length === 0 ? (
-          <Empty>
-            No open positions. Entries are filled at the next session's open by{" "}
-            <code>job_fill</code>, never at the signal bar's close.
-          </Empty>
-        ) : (
+        <div className="sw-tabs">
+          {[
+            ["watchlist", "Watchlist", watching.length],
+            ["open", "Open", positions.length],
+            ["closed", "Closed", closed.length],
+            ["skipped", "Skipped", skipped.length],
+          ].map(([key, label, n]) => (
+            <button
+              key={key}
+              className={`sw-tab${tab === key ? " active" : ""}`}
+              onClick={() => setTab(key)}
+            >
+              {label} <em>{n}</em>
+            </button>
+          ))}
+        </div>
+
+        {tab === "watchlist" ? (
           <>
-            <div className="sw-table-scroll">
-              <table className="sw-table">
-                <thead>
-                  <tr>
-                    <th>Book</th>
-                    <th>Symbol</th>
-                    <th className="num">Entry</th>
-                    <th className="num">Stop</th>
-                    <th className="num">Target</th>
-                    <th className="num">Qty</th>
-                    <th className="num">Planned R:R</th>
-                    <th className="num">Held</th>
-                    <th className="num">Last</th>
-                    <th className="num">Unrealised</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map((p) => {
-                    const m = markBySym.get(`${p.book}:${p.id}`);
-                    return (
-                      <tr key={`${p.book}-${p.id}`}>
-                        <td>
-                          <span className={`sw-book ${p.book.toLowerCase()}`}>
-                            {p.book}
-                          </span>
-                        </td>
-                        <td className="sym">{p.symbol}</td>
-                        <td className="num">{fmtNum(p.entry)}</td>
-                        <td className="num">{fmtNum(p.stop)}</td>
-                        <td className="num">{fmtNum(p.target)}</td>
-                        <td className="num">{fmtInt(p.qty)}</td>
-                        <td className="num">{fmtNum(p.rr_planned)}</td>
-                        <td className="num">
-                          {p.days_held ?? "—"}
-                          <span className="sw-muted">/{p.time_stop_days}</span>
-                        </td>
-                        <td className="num">{m ? fmtNum(m.last) : "—"}</td>
-                        <td
-                          className={`num strong ${m ? signClass(m.unrealised_R) : ""}`}
-                        >
-                          {m ? fmtR(m.unrealised_R) : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {marksError ? (
-              <p className="sw-note err">Live marks failed: {marksError}</p>
+            <form className="sw-logform" onSubmit={addWatch}>
+              <div className="sw-logform-title">Log a name</div>
+              <div className="sw-logform-grid">
+                {[
+                  ["symbol", "Symbol", "DYCL", "text"],
+                  ["pattern", "Pattern", "Cup & handle", "text"],
+                  ["entry", "Entry", "", "number"],
+                  ["stop", "Stop", "", "number"],
+                  ["target", "Target", "", "number"],
+                  ["flagged", "Flagged", "", "date"],
+                ].map(([k, label, ph, type]) => (
+                  <label key={k}>
+                    <span>{label}</span>
+                    <input
+                      type={type}
+                      step="any"
+                      placeholder={ph}
+                      value={form[k]}
+                      onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                    />
+                  </label>
+                ))}
+                <label className="wide">
+                  <span>Note</span>
+                  <input
+                    type="text"
+                    placeholder="Why this one, and what would change your mind"
+                    value={form.note}
+                    onChange={(e) => setForm({ ...form, note: e.target.value })}
+                  />
+                </label>
+              </div>
+              <button
+                className="sw-btn primary"
+                type="submit"
+                disabled={busy || !form.symbol.trim()}
+              >
+                Add to watchlist
+              </button>
+            </form>
+
+            {watching.length === 0 ? (
+              <Empty>
+                Nothing on the watchlist. Log the names you are considering —
+                including the ones you decide against. The Skipped tab is the
+                point: if what you skip outperforms what you take, the problem is
+                your trigger, not the screen.
+              </Empty>
             ) : (
-              <p className="sw-note">
-                Marks are a read-only view of where a position stands. Only the
-                scheduler closes trades — this page never books an exit.
-              </p>
+              watching.map((w) => (
+                <WatchCard
+                  key={w.id}
+                  item={w}
+                  onPatch={patchWatch}
+                  onDelete={removeWatch}
+                />
+              ))
             )}
           </>
-        )}
+        ) : null}
+
+        {tab === "open" ? (
+          positions.length === 0 ? (
+            <Empty>
+              No open paper positions. Entries are filled at the next session's
+              open by <code>job_fill</code>, never at the signal bar's close.
+            </Empty>
+          ) : (
+            positions.map((p) => {
+              const m = markBySym.get(`${p.book}:${p.id}`);
+              return (
+                <div className="sw-trade" key={`${p.book}-${p.id}`}>
+                  <div className="sw-trade-head">
+                    <div>
+                      <h3>{p.symbol}</h3>
+                      <p className="sw-trade-sub">
+                        <span className={`sw-book ${p.book.toLowerCase()}`}>
+                          {p.book}
+                        </span>{" "}
+                        · entered {p.entry_date} · held {p.days_held ?? "—"}/
+                        {p.time_stop_days} sessions
+                      </p>
+                    </div>
+                    <span className="sw-status open">OPEN</span>
+                  </div>
+                  <PriceRail
+                    stop={p.stop}
+                    entry={p.entry}
+                    target={p.target}
+                    mark={m ? m.last : null}
+                  />
+                  <div className="sw-minis">
+                    <Stat label="Last mark" value={m ? `₹${fmtNum(m.last)}` : "—"} />
+                    <Stat
+                      label="R now"
+                      value={m ? fmtR(m.unrealised_R) : "—"}
+                      cls={m ? signClass(m.unrealised_R) : ""}
+                    />
+                    <Stat label="1R" value={`₹${fmtNum(p.risk_per_share)}`} />
+                    <Stat label="Planned R:R" value={`${fmtNum(p.rr_planned)} : 1`} />
+                    <Stat label="Shares" value={fmtInt(p.qty)} />
+                  </div>
+                </div>
+              );
+            })
+          )
+        ) : null}
+
+        {tab === "closed" ? (
+          closed.length === 0 ? (
+            <Empty>No closed paper trades yet.</Empty>
+          ) : (
+            closed.map((c, i) => (
+              <div className="sw-trade closed" key={i}>
+                <div className="sw-trade-head">
+                  <div>
+                    <h3>{c.symbol}</h3>
+                    <p className="sw-trade-sub">
+                      <span className={`sw-book ${c.book.toLowerCase()}`}>
+                        {c.book}
+                      </span>{" "}
+                      · {c.entry_date} → {c.exit_date}
+                    </p>
+                  </div>
+                  <span className={`sw-exit ${c.exit_reason}`}>{c.exit_reason}</span>
+                </div>
+                <div className="sw-minis">
+                  <Stat label="Entry" value={`₹${fmtNum(c.entry)}`} />
+                  <Stat label="Exit" value={`₹${fmtNum(c.exit_price)}`} />
+                  <Stat
+                    label="Result"
+                    value={fmtR(c.r_multiple)}
+                    cls={signClass(c.r_multiple)}
+                  />
+                  <Stat
+                    label="P&L"
+                    value={`₹${fmtInt(c.pnl)}`}
+                    cls={signClass(c.pnl)}
+                  />
+                </div>
+              </div>
+            ))
+          )
+        ) : null}
+
+        {tab === "skipped" ? (
+          skipped.length === 0 ? (
+            <Empty>
+              Nothing skipped yet. Names you pass on are worth keeping — a skip
+              log is the only way to find out whether your entry trigger is
+              costing you.
+            </Empty>
+          ) : (
+            skipped.map((w) => (
+              <WatchCard
+                key={w.id}
+                item={w}
+                onPatch={patchWatch}
+                onDelete={removeWatch}
+              />
+            ))
+          )
+        ) : null}
+
+        {marksError ? (
+          <p className="sw-note err">Live marks failed: {marksError}</p>
+        ) : null}
       </Card>
 
       {/* ---------------- Books comparison ---------------- */}
@@ -389,50 +938,6 @@ export default function SwingDashboard() {
           </>
         )}
 
-        {closed.length > 0 ? (
-          <div className="sw-table-scroll tight">
-            <table className="sw-table">
-              <thead>
-                <tr>
-                  <th>Book</th>
-                  <th>Symbol</th>
-                  <th>Exited</th>
-                  <th>Reason</th>
-                  <th className="num">Entry</th>
-                  <th className="num">Exit</th>
-                  <th className="num">R</th>
-                  <th className="num">P&L ₹</th>
-                </tr>
-              </thead>
-              <tbody>
-                {closed.map((c, i) => (
-                  <tr key={i}>
-                    <td>
-                      <span className={`sw-book ${c.book.toLowerCase()}`}>
-                        {c.book}
-                      </span>
-                    </td>
-                    <td className="sym">{c.symbol}</td>
-                    <td>{c.exit_date}</td>
-                    <td>
-                      <span className={`sw-exit ${c.exit_reason}`}>
-                        {c.exit_reason}
-                      </span>
-                    </td>
-                    <td className="num">{fmtNum(c.entry)}</td>
-                    <td className="num">{fmtNum(c.exit_price)}</td>
-                    <td className={`num strong ${signClass(c.r_multiple)}`}>
-                      {fmtR(c.r_multiple)}
-                    </td>
-                    <td className={`num ${signClass(c.pnl)}`}>
-                      {fmtInt(c.pnl)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
       </Card>
 
       {/* ---------------- Funnel + tokens ---------------- */}
@@ -528,6 +1033,29 @@ export default function SwingDashboard() {
           )}
         </Card>
       </div>
+
+      {tip ? (
+        <div className="sw-tip" role="status">
+          <b>{tip.label.replace("  ✔", "")}</b>
+          <span className={signClass(tip.value)}>
+            {tip.value >= 0 ? "+" : "−"}
+            {Math.abs(tip.value).toFixed(2)}%
+          </span>
+          {tip.meta && tip.meta.advance !== undefined ? (
+            <span className="sw-muted">
+              breadth {tip.meta.advance}/{tip.meta.decline} · PE{" "}
+              {fmtNum(tip.meta.sector_pe, 1)} · {tip.meta.stock_cnt} stocks
+            </span>
+          ) : null}
+          {tip.meta && tip.meta.tech_trend ? (
+            <span className="sw-muted">
+              {tip.meta.tech_trend}
+              {tip.meta.pe ? ` · PE ${fmtNum(tip.meta.pe, 1)}` : ""}
+              {tip.meta.passed_screen ? " · passed the screen" : ""}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       <p className="sw-foot">
         Reading <code>{data.db_path}</code>. This page only reads — the scheduler

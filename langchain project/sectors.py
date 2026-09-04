@@ -86,6 +86,19 @@ CREATE TABLE IF NOT EXISTS sector_board (
     stock_cnt  INTEGER,
     PRIMARY KEY (day, slug)
 );
+-- The chosen sector's constituents, recorded at scan time. The dashboard reads
+-- only SQLite so a page load costs nothing; fetching Moneycontrol per request
+-- would put a scrape on every refresh and a rate limit in the user's way.
+CREATE TABLE IF NOT EXISTS sector_stocks (
+    day        TEXT NOT NULL,
+    slug       TEXT NOT NULL,
+    symbol     TEXT NOT NULL,
+    mc_name    TEXT,
+    chg_pct    REAL,
+    tech_trend TEXT,
+    pe         REAL,
+    PRIMARY KEY (day, slug, symbol)
+);
 """
 
 
@@ -169,6 +182,26 @@ def save_board(rows: list[dict], day: str | None = None) -> int:
             )
         con.commit()
         return len(rows)
+    finally:
+        con.close()
+
+
+def save_stocks(slug: str, resolved: list[tuple[str, dict]],
+                day: str | None = None) -> int:
+    """Persist the sector's constituents so the dashboard never has to scrape."""
+    day = day or date.today().isoformat()
+    con = _con()
+    try:
+        con.execute("DELETE FROM sector_stocks WHERE day=? AND slug=?", (day, slug))
+        for symbol, s in resolved:
+            con.execute(
+                "INSERT OR REPLACE INTO sector_stocks "
+                "(day,slug,symbol,mc_name,chg_pct,tech_trend,pe) VALUES (?,?,?,?,?,?,?)",
+                (day, slug, symbol, s.get("mc_name"), s.get("chg_pct"),
+                 s.get("tech_trend"), s.get("pe")),
+            )
+        con.commit()
+        return len(resolved)
     finally:
         con.close()
 
@@ -325,15 +358,18 @@ def resolve_universe(top_n: int = 1, refresh: bool = True) -> tuple[list[str], d
             report["errors"].append(f"{sec['slug']}: {e}")
             continue
         picked = []
+        resolved: list[tuple[str, dict]] = []
         for s in stocks:
             t = to_ticker(s["slug_name"])
             if not t:
                 report["unmatched"].append(f"{sec['slug']}/{s['mc_name']}")
                 continue
+            resolved.append((t, s))
             if t not in seen:
                 seen.add(t)
                 symbols.append(t)
                 picked.append(t)
+        save_stocks(sec["slug"], resolved)
         report["chosen"].append({
             "sector": sec["sector"], "slug": sec["slug"],
             "total_chg": sec["total_chg"], "sessions": sec["sessions"],
