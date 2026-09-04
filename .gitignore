@@ -8,6 +8,10 @@ __pycache__/
 
 # Database Persistence (Don't push your local trade history)
 *.db
+# ...except the swing paper book. It is committed on purpose: Actions
+# runners are ephemeral, so this file is how paper state survives between
+# scheduled runs. ~45 KB, and it contains no secrets.
+!langchain project/app/db/swing.db
 *.db-shm
 *.db-wal
 

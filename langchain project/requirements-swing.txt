@@ -1,0 +1,31 @@
+# Dependencies for the GitHub Actions "Swing Paper Agent" job ONLY.
+#
+# Same reasoning as requirements-cloud.txt: requirements.txt is a Windows freeze
+# containing pywin32, which does not exist on Linux, plus ~244 packages for an
+# AI stack this path barely touches.
+#
+# Deliberately NOT here: faiss-cpu, langchain-community, langchain-google-genai.
+# analyst.py imports those lazily, inside _vector_db(), and only AFTER checking
+# that a faiss_index directory exists. The index is gitignored, so on a runner
+# that check fails first and the retriever returns [] without ever importing
+# them. The analyst still runs — on indicators alone, with no filings context.
+#
+# Unpinned on purpose: this must resolve on the Ubuntu runner.
+
+# Routing + budget guard (llm_router.py)
+litellm
+
+# jobs.py imports BlockingScheduler at module level even for one-shot commands
+apscheduler
+
+# The screen (scanner.py)
+pandas
+numpy
+yfinance
+
+# Telegram push (jobs.notify)
+requests
+
+# jobs.py / llm_router.py call load_dotenv(find_dotenv()); harmless no-op on CI,
+# but the import must resolve.
+python-dotenv

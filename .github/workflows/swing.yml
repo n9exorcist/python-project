@@ -1,0 +1,133 @@
+name: Swing Paper Agent
+
+# jobs.py normally runs a BlockingScheduler that stays up forever. That shape
+# cannot work on Actions (6-hour job ceiling), so this drives the same code
+# through its one-shot CLI instead: `python jobs.py scan|fill|mark|report`.
+#
+# All times below are UTC, which is what cron uses. IST is UTC+05:30.
+# The runner's own clock is forced to Asia/Kolkata further down so that
+# date.today() inside the Python matches the trading day you actually mean.
+
+on:
+  schedule:
+    # 03:46 UTC = 09:16 IST — fill yesterday's queue at today's open.
+    # Delay-tolerant: job_fill reads the session's OPEN price, which is fixed
+    # once the market opens, so a late runner still books the same fill.
+    - cron: "46 3 * * 1-5"
+
+    # 10:10 UTC = 15:40 IST — mark open positions, then run the screen.
+    # ONE run, not the 15-minute polling the local scheduler does. With daily
+    # bars, polling mid-session just re-reads the same forming bar; after the
+    # close the bar is complete, which is exactly what mark_to_market needs.
+    # 27 runs/day collapse to 1 with no loss of fidelity.
+    - cron: "10 10 * * 1-5"
+
+    # 03:30 UTC Sat = 09:00 IST Sat — weekly report + cache purge.
+    - cron: "30 3 * * 6"
+
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Which job to run"
+        required: true
+        default: "scan"
+        type: choice
+        options: [scan, fill, mark, report, mark+scan]
+
+# Runs write swing.db and push it. Queue them rather than letting two runs race
+# the same file; do not cancel a run mid-push.
+concurrency:
+  group: swing-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: write # to commit the paper book back
+
+jobs:
+  swing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # The runner is UTC. Forcing IST means date.today() in scanner/paper_broker
+      # records the Indian trading date rather than whatever UTC happens to say.
+      TZ: Asia/Kolkata
+      # The swing book, split out from the 14 MB memory.db so committing state
+      # back after every run costs ~45 KB instead of bloating git history.
+      AGENT_DB: ${{ github.workspace }}/langchain project/app/db/swing.db
+      SWING_GEMINI_API_KEY: ${{ secrets.SWING_GEMINI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SWING_TELEGRAM_CHAT_ID: ${{ secrets.SWING_TELEGRAM_CHAT_ID }}
+      UNIVERSE: ${{ vars.UNIVERSE }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r "langchain project/requirements-swing.txt"
+
+      - name: Decide which command this run is
+        id: pick
+        run: |
+          case "${{ github.event.schedule }}" in
+            "46 3 * * 1-5")  CMDS="fill" ;;
+            "10 10 * * 1-5") CMDS="mark scan" ;;
+            "30 3 * * 6")    CMDS="report" ;;
+            *)               CMDS="${{ inputs.command }}" ;;
+          esac
+          # the dispatch choice "mark+scan" is two commands
+          CMDS="${CMDS/mark+scan/mark scan}"
+          echo "cmds=$CMDS" >> "$GITHUB_OUTPUT"
+          echo "Running: $CMDS"
+
+      - name: Run
+        working-directory: langchain project
+        run: |
+          for c in ${{ steps.pick.outputs.cmds }}; do
+            echo "::group::jobs.py $c"
+            python jobs.py "$c"
+            echo "::endgroup::"
+          done
+
+      - name: Persist the paper book
+        run: |
+          BOOK="langchain project/app/db/swing.db"
+          if git diff --quiet -- "$BOOK" && [ -z "$(git status --porcelain "$BOOK")" ]; then
+            echo "swing.db unchanged — nothing to commit"
+            exit 0
+          fi
+          git config user.name  "swing-agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f "$BOOK"
+          git commit -m "swing: ${{ steps.pick.outputs.cmds }} $(date -u +%Y-%m-%dT%H:%MZ)"
+          # The concurrency group serialises runs, so a clash here means you
+          # pushed locally in the meantime. -X theirs keeps the runner's book,
+          # which is the one that just did the work.
+          for i in 1 2 3; do
+            git pull --rebase -X theirs origin "${GITHUB_REF_NAME}" \
+              && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "push attempt $i failed, retrying"
+            sleep 5
+          done
+          exit 1
+
+      - name: Tell me if this run broke
+        # Without this a failed run is silent, and silence looks exactly like
+        # "no setups today" — the same trap notify() itself was fixed for.
+        if: failure()
+        run: |
+          CHAT="${SWING_TELEGRAM_CHAT_ID:-$TELEGRAM_CHAT_ID}"
+          [ -z "$TELEGRAM_BOT_TOKEN" ] && exit 0
+          curl -s -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT}" \
+            -d "text=Swing agent FAILED (${{ steps.pick.outputs.cmds }}) — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /dev/null

@@ -30,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Same resolution order as the rest of the swing path. Anchored to this file so
 # the API behaves identically no matter what directory uvicorn was launched from.
-DB_PATH = os.getenv("AGENT_DB") or os.path.join(BASE_DIR, "app", "db", "memory.db")
+DB_PATH = os.getenv("AGENT_DB") or os.path.join(BASE_DIR, "app", "db", "swing.db")
 
 
 def _con() -> sqlite3.Connection:

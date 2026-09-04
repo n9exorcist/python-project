@@ -249,6 +249,17 @@ def _persist(cands: list[Candidate], rejects: dict[str, int], db_path: str) -> N
     con = sqlite3.connect(db_path)
     try:
         con.executescript(SCHEMA)
+        today = date.today().isoformat()
+
+        # A re-scan supersedes the earlier one; it does not layer on top of it.
+        # INSERT OR REPLACE alone only overwrites keys the new run happens to
+        # produce, so a symbol that passed this morning and fails this afternoon
+        # would keep its stale "passed" row, and rejection reasons from a run
+        # over a different universe would survive underneath the new counts.
+        # The day's picture has to be replaced whole.
+        con.execute("DELETE FROM signals WHERE scan_date=?", (today,))
+        con.execute("DELETE FROM scan_stats WHERE scan_date=?", (today,))
+
         for c in cands:
             d = asdict(c)
             cols = ",".join(d)
@@ -257,7 +268,6 @@ def _persist(cands: list[Candidate], rejects: dict[str, int], db_path: str) -> N
                 f"INSERT OR REPLACE INTO signals ({cols}) VALUES ({marks})",
                 list(d.values()),
             )
-        today = date.today().isoformat()
         for reason, n in rejects.items():
             con.execute(
                 "INSERT OR REPLACE INTO scan_stats (scan_date, reason, n) VALUES (?,?,?)",
