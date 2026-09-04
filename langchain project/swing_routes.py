@@ -440,6 +440,16 @@ def dashboard(day: str | None = None) -> dict[str, Any]:
         return {
             "db_path": DB_PATH,
             "today": date.today().isoformat(),
+            # The book's own constants, so the UI can offer to derive levels
+            # from a price without hardcoding a second copy of the rules that
+            # would drift from paper_broker the first time you tune them.
+            "rules": {
+                "fixed_stop_pct": pb.FIXED_STOP_PCT,
+                "fixed_target_pct": pb.FIXED_TARGET_PCT,
+                "atr_stop_mult": pb.ATR_STOP_MULT,
+                "structural_rr": pb.STRUCTURAL_RR,
+                "time_stop_days": pb.TIME_STOP_DAYS,
+            },
             "sectors": _sectors(con),
             "scan": _latest_scan(con),
             "funnel": _funnel(con),

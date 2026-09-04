@@ -47,7 +47,14 @@ async def lifespan(app: FastAPI):
     # Temporary test trigger - fires daily_trade_job once on every startup.
     # With HITL enabled it sends a Telegram approval prompt and HOLDS until you
     # respond, so comment this out during eval runs / normal restarts.
-    scheduler.add_job(daily_trade_job, "date")
+    #
+    # DISABLED. With uvicorn --reload this fires on every file save, not just on
+    # a deliberate restart, so an afternoon of edits becomes an afternoon of live
+    # approval prompts. Set RUN_TRADE_ON_STARTUP=1 for the occasional deliberate
+    # test; the 09:15 cron above is the real trigger.
+    if os.getenv("RUN_TRADE_ON_STARTUP") == "1":
+        scheduler.add_job(daily_trade_job, "date")
+        print("--- daily_trade_job queued for immediate run (RUN_TRADE_ON_STARTUP=1) ---")
     scheduler.start()
 
     # 3. AI infrastructure (Groq + LangGraph + MCP), then build the supervisor graph

@@ -865,3 +865,56 @@
   text-transform: uppercase;
   margin: 10px 0 0;
 }
+
+.sw-trade-actions.levels {
+  border-top: none;
+  padding-top: 0;
+  padding-bottom: 12px;
+}
+.sw-trade-actions.levels label { width: 96px; }
+.sw-trade-actions.levels span { text-transform: uppercase; }
+
+/* the tabs strip should never grow its own scrollbar gutter */
+.sw-tabs { scrollbar-width: none; }
+.sw-tabs::-webkit-scrollbar { display: none; }
+
+/* --- verdict legend ----------------------------------------------------- */
+.sw-legend { margin-top: 12px; }
+
+.sw-legend-toggle {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: #52514e;
+}
+.sw-legend-toggle:hover { color: #0b0b0b; }
+
+.sw-legend-rows {
+  margin-top: 10px;
+  border: 1px solid #f3f4f6;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.sw-legend-row {
+  display: grid;
+  grid-template-columns: 108px 1fr 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  border-bottom: 1px solid #f9fafb;
+}
+.sw-legend-row:last-child { border-bottom: none; }
+.sw-legend-row .sw-verdict { justify-self: start; }
+.sw-legend-mean { color: #52514e; }
+.sw-legend-effect { color: #898781; }
+
+@media (max-width: 720px) {
+  .sw-legend-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

@@ -196,7 +196,7 @@ function Stat({ label, value, cls = "" }) {
 /* One watchlist name. Mirrors an open position's layout deliberately: the same
    rail, the same four numbers, so a name you are watching and a name you took
    are read the same way and can be compared without re-reading the legend. */
-function WatchCard({ item, onPatch, onDelete }) {
+function WatchCard({ item, rules, onPatch, onDelete }) {
   const [mark, setMark] = React.useState(
     item.mark === null || item.mark === undefined ? "" : String(item.mark),
   );
@@ -212,6 +212,19 @@ function WatchCard({ item, onPatch, onDelete }) {
     const v = shares === "" ? null : parseInt(shares, 10);
     if (v !== null && !Number.isNaN(v) && v !== item.shares)
       onPatch(item.id, { shares: v });
+  };
+
+  // Deriving stop/target from an entry uses the book's own constants, sent
+  // down with the payload — a second copy of 7.5/17.5 in here would quietly
+  // disagree with paper_broker the first time those are tuned.
+  const applyRules = () => {
+    const e = Number(mark || item.mark || item.entry);
+    if (!e || Number.isNaN(e) || !rules) return;
+    onPatch(item.id, {
+      entry: Number(e.toFixed(2)),
+      stop: Number((e * (1 - rules.fixed_stop_pct / 100)).toFixed(2)),
+      target: Number((e * (1 + rules.fixed_target_pct / 100)).toFixed(2)),
+    });
   };
 
   const status = item.status || "watching";
@@ -253,6 +266,29 @@ function WatchCard({ item, onPatch, onDelete }) {
       </div>
 
       {item.note ? <p className="sw-trade-note">{item.note}</p> : null}
+
+      <div className="sw-trade-actions levels">
+        {["entry", "stop", "target"].map((k) => (
+          <label key={k}>
+            <span>{k}</span>
+            <input
+              type="number"
+              step="any"
+              defaultValue={item[k] ?? ""}
+              onBlur={(e) => {
+                const v = e.target.value === "" ? null : Number(e.target.value);
+                if (v !== null && !Number.isNaN(v) && v !== item[k])
+                  onPatch(item.id, { [k]: v });
+              }}
+            />
+          </label>
+        ))}
+        {rules ? (
+          <button className="sw-btn" onClick={applyRules} title="Derive stop and target from the FIXED book's rules">
+            Levels from rules (−{rules.fixed_stop_pct}% / +{rules.fixed_target_pct}%)
+          </button>
+        ) : null}
+      </div>
 
       <div className="sw-trade-actions">
         <label>
@@ -303,6 +339,50 @@ function WatchCard({ item, onPatch, onDelete }) {
       </div>
       {item.updated_at ? (
         <p className="sw-trade-stamp">marked {item.updated_at.slice(0, 10)}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/* What the verdict column means, next to the column itself. The words
+   take/watch/reject carry a specific consequence in jobs.py — only a `take`
+   with no event inside 21 days is ever queued — and a badge that does not say
+   so reads like a rating rather than a decision. */
+const VERDICT_LEGEND = [
+  ["take", "Nothing found that should stop this trade", "Queued for a paper entry at the next open"],
+  ["watch", "Structurally fine, but something gives pause", "Reported only — no entry"],
+  ["reject", "Something disqualifies it", "Reported only — no entry"],
+  ["none", "The analyst did not run for this name", "No entry"],
+];
+
+function VerdictLegend() {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="sw-legend">
+      <button className="sw-legend-toggle" onClick={() => setOpen(!open)}>
+        {open ? "▾" : "▸"} What do these verdicts mean?
+      </button>
+      {open ? (
+        <>
+          <div className="sw-legend-rows">
+            {VERDICT_LEGEND.map(([v, meaning, effect]) => (
+              <div className="sw-legend-row" key={v}>
+                <span className={`sw-verdict ${v}`}>
+                  {v === "none" ? "not analysed" : v}
+                </span>
+                <span className="sw-legend-mean">{meaning}</span>
+                <span className="sw-legend-effect">{effect}</span>
+              </div>
+            ))}
+          </div>
+          <p className="sw-note">
+            An earnings date, board meeting or EGM inside the next 21 days
+            vetoes the entry <b>even when the verdict is take</b> — such a name
+            shows an <code>EVENT&lt;21d</code> flag. Nothing here places a real
+            order: a queued name becomes a paper position in both books at the
+            next session's open.
+          </p>
+        </>
       ) : null}
     </div>
   );
@@ -441,7 +521,7 @@ export default function SwingDashboard() {
     );
   }
 
-  const { scan, funnel, positions, closed, books, tokens, today, sectors } = data;
+  const { scan, funnel, positions, closed, books, tokens, today, sectors, rules } = data;
   const markBySym = new Map((marks || []).map((m) => [`${m.book}:${m.id}`, m]));
 
   // One ruler across both sector panels.
@@ -454,7 +534,11 @@ export default function SwingDashboard() {
       )
     : 0.01;
 
-  const watching = (wl.rows || []).filter((r) => r.status !== "skipped");
+  // Three disjoint buckets. The earlier filter was `!== "skipped"`, which
+  // left a name you had marked as taken sitting in Watchlist while Open
+  // stayed empty — the status changed and nothing moved.
+  const watching = (wl.rows || []).filter((r) => r.status === "watching");
+  const taken = (wl.rows || []).filter((r) => r.status === "triggered");
   const skipped = (wl.rows || []).filter((r) => r.status === "skipped");
 
   const fixed = books.FIXED || {};
@@ -658,6 +742,7 @@ export default function SwingDashboard() {
             </table>
           </div>
         )}
+        <VerdictLegend />
       </Card>
 
       {/* ---------------- Tracker: watchlist / open / closed / skipped ------ */}
@@ -677,7 +762,7 @@ export default function SwingDashboard() {
         <div className="sw-tabs">
           {[
             ["watchlist", "Watchlist", watching.length],
-            ["open", "Open", positions.length],
+            ["open", "Open", positions.length + taken.length],
             ["closed", "Closed", closed.length],
             ["skipped", "Skipped", skipped.length],
           ].map(([key, label, n]) => (
@@ -746,6 +831,7 @@ export default function SwingDashboard() {
                 <WatchCard
                   key={w.id}
                   item={w}
+                  rules={rules}
                   onPatch={patchWatch}
                   onDelete={removeWatch}
                 />
@@ -755,13 +841,31 @@ export default function SwingDashboard() {
         ) : null}
 
         {tab === "open" ? (
-          positions.length === 0 ? (
-            <Empty>
-              No open paper positions. Entries are filled at the next session's
-              open by <code>job_fill</code>, never at the signal bar's close.
-            </Empty>
-          ) : (
-            positions.map((p) => {
+          <>
+            {taken.map((w) => (
+              <WatchCard
+                key={`w${w.id}`}
+                item={w}
+                rules={rules}
+                onPatch={patchWatch}
+                onDelete={removeWatch}
+              />
+            ))}
+            {positions.length === 0 && taken.length === 0 ? (
+              <Empty>
+                Nothing open. Names you mark as triggered appear here, and the
+                scheduler's paper entries are filled at the next session's open
+                by <code>job_fill</code> — never at the signal bar's close.
+              </Empty>
+            ) : null}
+            {positions.length === 0 && taken.length > 0 ? (
+              <p className="sw-note">
+                These are names you marked as taken. The scheduler's paper books
+                have no open position yet — it fills at the next session's open,
+                and it only acts on names the screen passed.
+              </p>
+            ) : null}
+            {positions.map((p) => {
               const m = markBySym.get(`${p.book}:${p.id}`);
               return (
                 <div className="sw-trade" key={`${p.book}-${p.id}`}>
@@ -797,8 +901,8 @@ export default function SwingDashboard() {
                   </div>
                 </div>
               );
-            })
-          )
+            })}
+          </>
         ) : null}
 
         {tab === "closed" ? (
@@ -850,6 +954,7 @@ export default function SwingDashboard() {
               <WatchCard
                 key={w.id}
                 item={w}
+                rules={rules}
                 onPatch={patchWatch}
                 onDelete={removeWatch}
               />

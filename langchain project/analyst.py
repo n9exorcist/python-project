@@ -32,10 +32,32 @@ DB_PATH = os.getenv("AGENT_DB", "memory.db")
 
 RAG_TOP_K = 3               # was 10; the tail chunks were ~60% of input tokens
 CACHE_TTL_DAYS = 7
-MIN_CANDIDATES = 2          # below this, the LLM adds nothing worth a call
+# Recalibrated for a sector-sized universe. At 2 this gate was written for a
+# Nifty-500 sweep, where several names passing was normal and a lone survivor
+# was noise worth skipping. Screening one sector, the universe is ~8-40 names
+# and a single name clearing every filter is the expected *good* outcome — so
+# the old value silenced the analyst exactly when it had something to say, and
+# left the dashboard reporting "not analysed" on the only name that passed.
+# One candidate costs ~1,500 tokens and one request against a 300,000/150 daily
+# budget. Set to 2 again if you would rather batch.
+MIN_CANDIDATES = 1
 MAX_FINALISTS = 5           # hard ceiling on calls per scan
 MAX_OUT_TOKENS = 400
-PROMPT_VERSION = "analyst-v1.2"
+# Gemini 3.x Flash "thinks" before answering, and those reasoning tokens are
+# charged against max_tokens while contributing nothing to the content. Measured:
+# 228 reasoning tokens to produce 34 tokens of JSON. At 400 x 1 candidate the
+# answer was truncated mid-key and the whole batch was dropped — which became the
+# common case the moment MIN_CANDIDATES dropped to 1.
+#
+# reasoning_effort="low" removes the overhead outright (reasoning_tokens -> none).
+# The headroom below is belt and braces for a provider that ignores it; a few
+# hundred unused tokens are free, a silently dropped verdict is not.
+REASONING_HEADROOM = 700
+REASONING_EFFORT = "low"
+# Bumped: the context changed from FAISS document chunks to the NSE
+# corporate calendar, so every cached verdict was formed on different
+# evidence and must be re-asked.
+PROMPT_VERSION = "analyst-v2.0-nse-events"
 
 CACHE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS analyst_cache (
@@ -49,9 +71,14 @@ CREATE INDEX IF NOT EXISTS ix_ac_created ON analyst_cache(created_at);
 
 SYSTEM = (
     "You are a swing-trade analyst for NSE equities. You receive precomputed "
-    "indicators and retrieved filings. You do not recompute anything. "
-    "Your job is the veto: flag corporate events, dilution, pledges, auditor "
-    "or governance issues that indicators cannot see. "
+    "indicators and this company's actual NSE corporate calendar for the next "
+    "21 days. You do not recompute anything. "
+    "Your job is the veto: judge whether the listed corporate events, dilution, "
+    "pledges, auditor or governance issues make this a bad swing entry over the "
+    "next two to five weeks. "
+    "Judge only what is shown. If the calendar says no events are on record, "
+    "do not invent one; if it says the calendar could not be fetched, treat the "
+    "event risk as unknown and prefer 'watch' over 'take'. "
     "Reply with a single JSON object and no other text."
 )
 
@@ -267,22 +294,27 @@ def _chunk_id(doc) -> str:
 
 
 def default_retriever(symbol: str, k: int = RAG_TOP_K) -> list[dict]:
-    """Top-k chunks from the local FAISS index as [{'id','text'}].
+    """This company's NSE corporate calendar, as [{'id','text'}].
 
-    k is enforced here rather than trusted to the store. mcp_server.py builds
-    its retriever with k=5, and the cap is where the token saving lives.
+    Replaces the FAISS lookup this node used to do. That index holds the
+    project's ingested documents — Accenture earnings PDFs — so querying it with
+    an NSE smallcap symbol returned confidently irrelevant text, and the veto had
+    nothing real to veto on.
+
+    A calendar lookup is also the right shape for the question. "Is there a board
+    meeting inside the hold period?" is a date-bounded query over structured
+    records; similarity search can only approximate what SQL answers exactly.
     """
-    db = _vector_db()
-    if db is None:
-        return []
     try:
-        docs = db.similarity_search(symbol, k=k)
-    except Exception:
-        return []
-    return [
-        {"id": _chunk_id(d), "text": getattr(d, "page_content", "")}
-        for d in docs
-    ][:k]
+        import events
+
+        events.refresh(symbol)
+        return events.context_chunks(symbol, k)[:k]
+    except Exception as e:
+        # An unreachable exchange must read as unknown, never as all-clear.
+        return [{"id": f"nse:{symbol}:error",
+                 "text": f"NSE calendar unavailable ({str(e)[:80]}); "
+                         f"event risk unknown"}]
 
 
 def _trim(text: str, words: int = 90) -> str:
@@ -376,16 +408,24 @@ def analyze(
     try:
         resp = completer(
             node="analyst", messages=messages,
-            max_tokens=MAX_OUT_TOKENS * len(misses), json_mode=True,
+            max_tokens=REASONING_HEADROOM + MAX_OUT_TOKENS * len(misses),
+            json_mode=True, reasoning_effort=REASONING_EFFORT,
         )
     except BudgetExceeded as e:
         notes.append(f"batch of {len(misses)} skipped — {e}")
         return out, notes
 
-    raw = getattr(resp.choices[0].message, "content", None)
+    choice = resp.choices[0]
+    raw = getattr(choice.message, "content", None)
     results = _parse_results(raw)
     if results is None:
-        notes.append("unparseable response from analyst; batch dropped")
+        # Name the actual cause. "Unparseable" covers a refusal, a filter and a
+        # truncation alike, and only one of those is fixed by a bigger budget —
+        # so say which happened rather than making the next person guess.
+        why = ("response hit the token ceiling mid-JSON"
+               if getattr(choice, "finish_reason", None) == "length"
+               else f"unparseable response ({type(raw).__name__})")
+        notes.append(f"analyst batch dropped: {why}")
         return out, notes
 
     by_sym = {str(r.get("sym", "")).upper(): r for r in results if isinstance(r, dict)}
@@ -396,14 +436,31 @@ def analyze(
         if not data:
             notes.append(f"{c.symbol}: missing from response, dropped")
             continue
+        # The event flag is COMPUTED, never taken from the model. It gates a
+        # real entry (jobs.py drops any take with an event inside the window),
+        # and a model that has been handed a calendar will still occasionally
+        # answer false because the numbers look bullish. The calendar decides.
+        try:
+            import events as _ev
+
+            has_event = bool(_ev.upcoming(c.symbol))
+            unknown = not _ev.fetch_ok(c.symbol)
+        except Exception:
+            has_event, unknown = False, True
+
         v = Verdict(
             symbol=c.symbol,
             verdict=str(data.get("verdict", "watch")).lower(),
             pattern=str(data.get("pattern", ""))[:40],
             thesis=str(data.get("thesis", ""))[:400],
             risks=[str(r)[:80] for r in (data.get("risks") or [])][:3],
-            event_within_21d=bool(data.get("event_within_21d", False)),
+            event_within_21d=has_event,
         )
+        # Could not reach the exchange: an unverified name must not be entered
+        # on an all-clear we never actually got.
+        if unknown and v.verdict == "take":
+            v.verdict = "watch"
+            v.risks = (v.risks + ["NSE calendar unavailable; event risk unchecked"])[:3]
         if v.verdict not in ("take", "watch", "reject"):
             v.verdict = "watch"
         _store(key, c.symbol, {k: getattr(v, k) for k in
