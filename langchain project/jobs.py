@@ -64,8 +64,12 @@ def notify(text: str) -> bool:
 
     Returns True when Telegram accepted the message.
     """
+    # Always echo to stdout, not only when Telegram is unconfigured. On a CI
+    # runner the job log is the only record anyone can read afterwards, and a
+    # successful send prints nothing — so a working scan and a scan that never
+    # ran produced an identical, empty log.
+    print(text)
     if not (TG_TOKEN and TG_CHAT):
-        print(text)
         return False
     try:
         r = requests.post(

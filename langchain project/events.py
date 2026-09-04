@@ -33,6 +33,12 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 import requests
+from dotenv import find_dotenv, load_dotenv
+
+# Without this, running this module directly picks up no AGENT_DB and
+# quietly writes to a "memory.db" in the working directory instead of the
+# real book — the data looks saved and simply is not there.
+load_dotenv(find_dotenv())
 
 DB_PATH = os.getenv("AGENT_DB", "memory.db")
 

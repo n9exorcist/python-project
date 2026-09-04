@@ -50,11 +50,17 @@ import os
 import re
 import sqlite3
 import urllib.request
+from dotenv import find_dotenv, load_dotenv
 from datetime import date, timedelta
 from typing import Any
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(BASE_DIR, "data")
+# Without this, running this module directly picks up no AGENT_DB and
+# quietly writes to a "memory.db" in the working directory instead of the
+# real book — the data looks saved and simply is not there.
+load_dotenv(find_dotenv())
+
 DB_PATH = os.getenv("AGENT_DB", "memory.db")
 
 MC_BOARD = "https://www.moneycontrol.com/markets/sector-analysis/sector-performance/"
