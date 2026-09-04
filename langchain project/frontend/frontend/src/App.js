@@ -24,6 +24,7 @@ import Home from "./React/Home.js";
 import "./App.css";
 import TaskDashboard from "./features/TaskDashboard.js";
 import TicTacToe from "./features/tictactoe.js";
+import SwingDashboard from "./features/SwingDashboard.js";
 
 const API_BASE = "http://127.0.0.1:8001";
 const DEFAULT_THREAD_ID = "market_analyst_session";
@@ -42,6 +43,9 @@ const SUGGESTIONS = [
 
 function App() {
   const [input, setInput] = useState("");
+  // Which panel the main column shows. The swing dashboard is a separate
+  // read-only view over the same backend, not part of the chat thread.
+  const [view, setView] = useState("chat");
 
   const { messages, isGenerating, threadId, progress } = useSelector(
     (state) => state.chat,
@@ -351,6 +355,23 @@ function App() {
             </div>
           </div>
 
+          <div className="view-tabs">
+            <button
+              className={`view-tab${view === "chat" ? " active" : ""}`}
+              onClick={() => setView("chat")}
+            >
+              Chat
+            </button>
+            <button
+              className={`view-tab${view === "swing" ? " active" : ""}`}
+              onClick={() => setView("swing")}
+            >
+              Swing
+            </button>
+          </div>
+
+          {view === "chat" ? (
+            <>
           <button className="clear-button" onClick={handleClearHistory}>
             Clear chat
           </button>
@@ -386,9 +407,23 @@ function App() {
               ))
             )}
           </div>
+            </>
+          ) : (
+            <div className="sidebar-section">
+              <div className="sidebar-heading">Swing agent</div>
+              <div className="history-empty">
+                Read-only view of the paper books. The scan, fills and exits are
+                run by jobs.py as a separate process.
+              </div>
+            </div>
+          )}
         </aside>
 
         <main className="main-panel">
+          {view === "swing" ? (
+            <SwingDashboard />
+          ) : (
+            <>
           <header className="chat-header">
             <div>
               <h1 className="chat-title">Market Analyst</h1>
@@ -515,6 +550,8 @@ function App() {
               Enter to send, Shift + Enter for new line
             </div>
           </div>
+            </>
+          )}
         </main>
       </div>
       <div>

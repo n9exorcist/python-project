@@ -29,6 +29,7 @@ from agents import build_supervisor_graph
 from observability import obs_handler
 from trading import daily_trade_job
 from routes import router
+from swing_routes import router as swing_router
 
 MCP_SSE_URL = "http://127.0.0.1:8000/sse"
 
@@ -100,6 +101,9 @@ app.add_middleware(
 )
 
 app.include_router(router)
+# Read-only view over the swing agent's tables. Its scheduler runs as a separate
+# process (jobs.py); these endpoints only read what that process has written.
+app.include_router(swing_router)
 
 
 if __name__ == "__main__":
