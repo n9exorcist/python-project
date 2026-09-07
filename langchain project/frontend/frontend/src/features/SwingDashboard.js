@@ -14,6 +14,23 @@ const POLL_MS = 60000;
 // hidden here, not switched off. Render both again by making this a list.
 const SHOWN_BOOK = "FIXED";
 
+// A sector runs to 25-40 constituents, and a wall of tickers buries the panel's
+// point. Show the leaders and the laggards — that is the shape of the day — but
+// never drop a name that cleared the screen. The screened names are the entire
+// reason this panel is on the page, and one of them sitting mid-pack on a quiet
+// day is exactly the case the caption is warning about.
+const CONSTITUENT_ROWS = 10;
+
+function topAndBottom(stocks, n = CONSTITUENT_ROWS) {
+  const all = [...(stocks || [])].sort((a, b) => (b.chg_pct ?? 0) - (a.chg_pct ?? 0));
+  if (all.length <= n) return { rows: all, hidden: 0, total: all.length };
+  const half = Math.floor(n / 2);
+  const keep = new Set([...all.slice(0, half), ...all.slice(-half)]);
+  all.forEach((s) => s.passed_screen && keep.add(s));
+  const rows = all.filter((s) => keep.has(s));
+  return { rows, hidden: all.length - rows.length, total: all.length };
+}
+
 const fmtR = (v) =>
   v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}R`;
 
@@ -550,6 +567,8 @@ export default function SwingDashboard() {
   const taken = (wl.rows || []).filter((r) => r.status === "triggered");
   const skipped = (wl.rows || []).filter((r) => r.status === "skipped");
 
+  const constituents = topAndBottom(sectors && sectors.stocks);
+
   const shown = books[SHOWN_BOOK] || {};
   const hasTrades = (shown.closed || 0) > 0;
 
@@ -667,14 +686,14 @@ export default function SwingDashboard() {
             </div>
           ) : null}
 
-          {sectors.stocks.length > 0 ? (
+          {constituents.rows.length > 0 ? (
             <>
               <div className="sw-div-head plain">
                 {sectors.chosen.sector} constituents — day move
               </div>
               <DivergingRows
                 onHover={setTip}
-                rows={sectors.stocks.map((s) => ({
+                rows={constituents.rows.map((s) => ({
                   key: s.symbol,
                   label: `${s.symbol}${s.passed_screen ? "  ✔" : ""}`,
                   value: s.chg_pct ?? 0,
@@ -685,6 +704,9 @@ export default function SwingDashboard() {
               <p className="sw-note">
                 ✔ marks the names that cleared the technical screen. A big day move
                 is not the signal — the screen is.
+                {constituents.hidden > 0
+                  ? ` Strongest and weakest of ${constituents.total}; ${constituents.hidden} mid-pack names hidden, and any name that cleared the screen is always shown.`
+                  : ""}
               </p>
             </>
           ) : null}
