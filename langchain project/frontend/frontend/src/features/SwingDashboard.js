@@ -7,6 +7,13 @@ const API_BASE = "http://127.0.0.1:8001";
 // beyond localhost. Live prices are a separate, explicit action.
 const POLL_MS = 60000;
 
+// Which paper book this page renders. STRUCTURAL still runs and still records
+// every trade in swing.db — it is the control that tells "the screen picks bad
+// stocks" apart from "the 7.5% stop sits inside the daily noise", and that
+// question cannot be asked retroactively if the data was never collected. It is
+// hidden here, not switched off. Render both again by making this a list.
+const SHOWN_BOOK = "FIXED";
+
 const fmtR = (v) =>
   v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}R`;
 
@@ -521,7 +528,9 @@ export default function SwingDashboard() {
     );
   }
 
-  const { scan, funnel, positions, closed, books, tokens, sectors, rules } = data;
+  const { scan, funnel, books, tokens, sectors, rules } = data;
+  const positions = (data.positions || []).filter((p) => p.book === SHOWN_BOOK);
+  const closed = (data.closed || []).filter((c) => c.book === SHOWN_BOOK);
   const markBySym = new Map((marks || []).map((m) => [`${m.book}:${m.id}`, m]));
 
   // One ruler across both sector panels.
@@ -541,9 +550,8 @@ export default function SwingDashboard() {
   const taken = (wl.rows || []).filter((r) => r.status === "triggered");
   const skipped = (wl.rows || []).filter((r) => r.status === "skipped");
 
-  const fixed = books.FIXED || {};
-  const structural = books.STRUCTURAL || {};
-  const bothHaveTrades = (fixed.closed || 0) > 0 || (structural.closed || 0) > 0;
+  const shown = books[SHOWN_BOOK] || {};
+  const hasTrades = (shown.closed || 0) > 0;
 
   return (
     <div className="sw-wrap">
@@ -981,17 +989,17 @@ export default function SwingDashboard() {
       {/* ---------------- Books comparison ---------------- */}
       <Card
         title="Closed-trade performance"
-        subtitle="The question the two-book design exists to answer: is the edge in the screen, or in how the risk is framed?"
+        subtitle="How the fixed rules — 7.5% stop, 17.5% target — have actually done."
       >
-        {!bothHaveTrades ? (
+        {!hasTrades ? (
           <Empty>
-            No closed trades yet. Expectancy needs roughly 30 before it means
-            anything, and the two books cannot be compared under 10 each.
+            No closed trades yet. Expectancy needs roughly 30 closed trades
+            before it means anything.
           </Empty>
         ) : (
           <>
             <div className="sw-books">
-              {[fixed, structural].map((b) => (
+              {[shown].map((b) => (
                 <div className="sw-book-card" key={b.book}>
                   <div className={`sw-book ${String(b.book).toLowerCase()}`}>
                     {b.book}
@@ -1042,14 +1050,10 @@ export default function SwingDashboard() {
                 </div>
               ))}
             </div>
-            <p className={`sw-note ${books.verdict ? "verdict" : ""}`}>
-              {books.verdict
-                ? `After ${books.verdict.n} closed trades each, the ${
-                    books.verdict.leader === "FIXED"
-                      ? "fixed-percent"
-                      : "volatility-based"
-                  } rules lead by ${books.verdict.gap_R}R per trade.`
-                : "Fewer than 10 closed trades per book — too early to compare."}
+            <p className="sw-note">
+              {shown.closed >= 30
+                ? `${shown.closed} closed trades — expectancy is starting to mean something.`
+                : `${shown.closed} of roughly 30 closed trades. Expectancy below that is noise, not an edge.`}
             </p>
           </>
         )}
