@@ -13,9 +13,8 @@ import os
 import asyncio
 
 from dotenv import load_dotenv, find_dotenv
-from langchain_groq import ChatGroq
 
-from models import GROQ_MODEL
+from chat_llm import build_chat_llm
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from agents import build_supervisor_graph
@@ -26,15 +25,10 @@ load_dotenv(find_dotenv())
 # Port 8000 matches your mcp_server.py logs.
 MCP_SERVER_URL = "http://127.0.0.1:8000/sse"
 
-llm = ChatGroq(
-    model_name=GROQ_MODEL,
-    temperature=0,
-    api_key=os.getenv("GROQ_API_KEY"),
-    # Studio runs burn the same Groq quota as the app. Without this, they are
-    # invisible to the daily budget guard -- which is how the counter read 45%
-    # while Groq reported 99%.
-    callbacks=[obs_handler],
-)
+# Studio runs burn the same Groq quota as the app. Without the handler they are
+# invisible to the daily budget guard -- which is how the counter read 45%
+# while Groq reported 99%.
+llm = build_chat_llm(callbacks=[obs_handler])
 
 
 def _load_mcp_tools():

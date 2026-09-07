@@ -20,9 +20,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from langchain_groq import ChatGroq
 
-from models import GROQ_MODEL
+from chat_llm import build_chat_llm
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -64,14 +63,7 @@ async def lifespan(app: FastAPI):
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as saver:
         await saver.setup()
 
-        llm = ChatGroq(
-            model_name=GROQ_MODEL,
-            temperature=0,
-            api_key=os.getenv("GROQ_API_KEY"),
-            # Attached to the LLM itself, not just the request config, so calls made
-            # by any caller (including LangGraph Studio) count toward the daily total.
-            callbacks=[obs_handler],
-        )
+        llm = build_chat_llm(callbacks=[obs_handler])
 
         mcp_tools = []
         try:
