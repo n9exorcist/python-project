@@ -131,9 +131,13 @@ function App() {
   }, [messages, isGenerating]);
 
   const sessionHistory = useMemo(() => {
+    // Index into `messages`, captured BEFORE the filter. Numbering the filtered
+    // list instead gives a position that no longer addresses anything in the
+    // transcript, which is what a click has to scroll to.
     return messages
-      .filter((msg) => msg.role === "user")
-      .map((msg, index) => ({
+      .map((msg, index) => ({ msg, index }))
+      .filter(({ msg }) => msg.role === "user")
+      .map(({ msg, index }) => ({
         id: index,
         title: msg.text.length > 48 ? `${msg.text.slice(0, 48)}...` : msg.text,
         fullText: msg.text,
@@ -353,11 +357,24 @@ function App() {
     await sendMessage(text);
   };
 
-  const handleHistoryClick = (text) => {
+  const handleHistoryClick = (text, messageIndex) => {
     setInput(text);
+
+    // A plain focus() scrolls the composer into view, which cancels the jump
+    // below — the click looked like it did nothing at all. preventScroll keeps
+    // the caret ready without moving the transcript.
     if (textareaRef.current) {
-      textareaRef.current.focus();
+      textareaRef.current.focus({ preventScroll: true });
     }
+
+    const container = messagesContainerRef.current;
+    if (!container || messageIndex === undefined) return;
+    const target = container.querySelector(`[data-msg-index="${messageIndex}"]`);
+    if (!target) return;
+    // Stop following the stream, or the next token would drag the view straight
+    // back to the bottom the reader just navigated away from.
+    stickToBottomRef.current = false;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -416,7 +433,7 @@ function App() {
                     <button
                       key={item.id}
                       className="history-card"
-                      onClick={() => handleHistoryClick(item.fullText)}
+                      onClick={() => handleHistoryClick(item.fullText, item.id)}
                       title={item.fullText}
                     >
                       {item.title}
@@ -485,6 +502,7 @@ function App() {
                       return (
                         <div
                           key={index}
+                          data-msg-index={index}
                           className={`message-row ${isUser ? "user-row" : "ai-row"}`}
                         >
                           <div

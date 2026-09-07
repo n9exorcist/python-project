@@ -264,13 +264,34 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
             if msgs and getattr(msgs[-1], "type", "") == "tool":
                 tool_rounds += 1
 
-            # Once the budget is spent, drop tools so the model MUST synthesize.
+            # Once the budget is spent, hand straight to the writer.
+            #
+            # This used to re-ask the model with the tools removed. gpt-oss
+            # emits a tool call regardless of being told not to, and Groq
+            # rejects the whole request when the model calls a tool the request
+            # did not offer:
+            #
+            #     Tool choice is none, but model called a tool
+            #
+            # No instruction fixes that, because the model decides after the
+            # request is already formed. Not making the call cannot fail — and
+            # nothing is lost, because the writer composes the final answer
+            # from the tool results already sitting in state. It also removes
+            # one LLM call per specialist visit, which on this account matters:
+            # a single question was costing six calls and 18,712 tokens against
+            # a daily budget it had already blown through.
             if tool_rounds >= MAX_TOOL_ROUNDS:
-                active_llm = llm
-                extra = " You have gathered enough; now give your final answer without calling tools."
-            else:
-                active_llm = llm_spec
-                extra = " Use your tool(s) when a lookup is needed; otherwise answer directly."
+                return {
+                    "messages": [AIMessage(
+                        content=f"Gathered {tool_rounds} lookups; handing to the writer.",
+                        name=f"{name}_handoff",
+                    )],
+                    "active_agent": name,
+                    "tool_rounds": tool_rounds,
+                }
+
+            active_llm = llm_spec
+            extra = " Use your tool(s) when a lookup is needed; otherwise answer directly."
 
             sys = (
                 f"You are the {name} specialist on a market-analysis team. {focus}{extra} "
