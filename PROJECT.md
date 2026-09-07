@@ -26,6 +26,7 @@ inside it.** A screen run over an index is a screen with no thesis; the sector
 choice is the thesis, and the screen only decides which name expresses it.
 
 ```
+rules.py         the screen's thresholds, and the constitution governing changes
 sectors.py       Moneycontrol sector board -> rank sectors over N sessions
 universe.py      the best sector's constituents -> the day's universe
 scanner.py       deterministic technical screen -> candidates (no LLM)
@@ -33,6 +34,7 @@ events.py        NSE corporate calendar -> event veto
 analyst.py       ONE LLM call over all candidates -> take / watch / skip
 paper_broker.py  fills at the NEXT session's open, two rule sets in parallel
 jobs.py          schedules the above and reports to Telegram
+eval.py          weekly: Observe, Eval, Plan, Act -> adjusts rules.py
 ```
 
 ### 1. The sector board — `sectors.py`
@@ -63,8 +65,11 @@ analyst and the tests all import `jobs`, and none of them need a sector board.
 
 ### 3. The screen — `scanner.py`
 
-Deterministic, no LLM, versioned as `SCREEN_VERSION` so results stay comparable
-across time:
+Deterministic, no LLM. The five tunable thresholds live in `rules.py` as a
+database overlay on a hand-authored floor, and every `signals` row records the
+rule version that produced it — `v1.0` at baseline, `v1.0+<digest>` once the
+agent loop has moved something — so an outcome always attributes to the numbers
+in force when it was written.
 
 | Filter | Threshold |
 | --- | --- |
@@ -75,10 +80,14 @@ across time:
 | Liquidity | >= Rs 2 crore daily turnover |
 | Exclusions | circuit-locked bars, fewer than 220 bars of history |
 
-Every rejection is recorded by reason in `scan_stats`. That is what makes the
-funnel legible: without it, "no setups today" reads identically whether the
-screen swept 200 names or quietly shrank to 13 because the universe failed to
-load. **The size is the tell.**
+Every rejection is recorded twice. `scan_stats` keeps the aggregate count by
+reason, which is what makes the funnel legible: without it, "no setups today"
+reads identically whether the screen swept 200 names or quietly shrank to 13
+because the universe failed to load. **The size is the tell.**
+
+`scan_rejects` keeps one row per rejected symbol with what it actually measured.
+That is what the agent loop learns from, and the two are written together so
+they can never disagree about a day.
 
 ### 4. The event veto — `events.py`
 
@@ -202,7 +211,7 @@ Three deliberate exceptions:
 | --- | --- | --- |
 | `brief` | `46 3`, `30 4`, `30 5`, `30 7` | 09:16 / 10:00 / 11:00 / 13:00 |
 | `mark scan` | `10 10`, `10 12`, `10 14` | 15:40 / 17:40 / 19:40, all post-close |
-| `report` | `30 3 * * 6`, `30 7 * * 6` | Sat 09:00 / 13:00 |
+| `eval report` | `30 3 * * 6`, `30 7 * * 6` | Sat 09:00 / 13:00 |
 
 `TZ: Asia/Kolkata` on the runner. `swing.db` is committed back after every run
 that changes it.
@@ -251,6 +260,88 @@ any name that cleared the screen**, even mid-pack. A quiet day where the one
 screened name moved +3.77% is exactly the case the caption warns about, so
 hiding it to make room for a +13% name nothing selected would invert the
 message.
+
+---
+
+## The agent loop
+
+`eval.py`, weekly. Observe, Eval, Plan, Act. Two decisions define it.
+
+### Plan is deterministic
+
+Statistics decide, `rules.py` permits or refuses, and nothing asks a model what
+to do. The system's credibility rests on the screen being versioned and
+reproducible so an outcome attributes to a **rule**. An LLM choosing thresholds
+each week reintroduces exactly the discretion the two-book design exists to
+measure against: a rule change becomes indistinguishable from a mood, and the
+system's own history stops being evidence about anything.
+
+### Tighten or revert, never loosen past baseline
+
+The risks are not symmetric. Tightening costs opportunity — fewer trades, and
+you can see the ones you skipped. Loosening on a thin sample costs months of
+worse trades and is invisible while it happens, because the losses look like
+ordinary variance. **A screen dies by loosening, never by tightening.**
+
+So `rules.BASELINE` is a floor the agent cannot cross, it may always undo its
+own tightening, and a 40% drift cap stops a run of marginal evidence walking a
+threshold somewhere no single proposal could have put it. Every change is
+logged in `rule_history` with its evidence, and every `signals` row records the
+rule version that produced it.
+
+```
+loosening below the floor        -> refused, "1.5 is below the baseline 2.0"
+tightening beyond the drift cap  -> refused, "3.0 is 1.0 from the baseline..."
+tightening inside the cap        -> allowed, "tighten"
+reverting its own tightening     -> allowed, "revert"
+```
+
+### It does not learn from closed trades
+
+The book closes roughly one position a week, so a 30-trade gate is most of a
+year before the first finding — and by then the sector, the regime and the
+universe have all moved.
+
+It learns from **forward returns on everything the screen saw**. Each scan day
+produces around forty observations, and ten sessions later the tape says what
+each of them did. That measures the only thing the screen claims to do —
+separate names that go up from names that do not — accumulates roughly two
+hundred times faster than closed trades, and is the same question. Closed-trade
+statistics still gate anything about **exits**, because forward return says
+nothing about whether a stop or a target was right.
+
+Edge is checked before calibration. If the names the screen passes do not
+outperform the names it rejects, no threshold moves: tuning a screen with no
+edge is fitting noise with extra steps.
+
+### The record had to be rebuilt first
+
+`scan_stats` holds aggregate counts by reason. A name that missed volume at
+1.98× and one that missed at 0.30× are the same row, so no quantity of that
+data could ever show a threshold sitting in the wrong place. `scan_rejects` now
+records every rejected symbol with what it actually measured:
+
+```
+ORIENTPPR  below_ema        vol=8.69  ext=8.68   turnover=3.81
+RELIANCE   below_ema        vol=0.97  ext=0.24   turnover=1336.93
+SATIA      ema_not_stacked  vol=6.27  ext=13.53  turnover=5.4
+```
+
+Only the first failing filter is recorded — SATIA would also have failed
+`too_extended` — which is the same convention the funnel has always used.
+
+### Proving it is not a stub
+
+On the current record the loop reports waiting on all seven gates, which is
+correct and also exactly what a do-nothing stub would print. `test_eval_loop.py`
+builds synthetic records with known answers and checks both halves: that it
+tightens when the evidence is there, and that it refuses to loosen, to exceed
+the drift cap, and to tune a screen with no edge. 25 checks.
+
+```bash
+venv/Scripts/python.exe test_eval_loop.py    # 25 passed, 0 failed
+venv/Scripts/python.exe eval.py --dry-run    # proposals without applying them
+```
 
 ---
 
@@ -430,7 +521,8 @@ all candidates, with everything upstream of it deterministic.
 # Status
 
 Working and autonomous: sector selection, the screen, the NSE event veto, the
-daily analyst call, both paper books, the Telegram brief, and the dashboard.
+daily analyst call, both paper books, the Telegram brief, the dashboard, and the
+weekly agent loop.
 
 Verified running unattended: on 2026-09-07 the agent screened the 07-Sep session
 at 15:46 IST, passed **JKPAPER**, took it, and queued it for the next open —
@@ -441,11 +533,12 @@ Open:
 - **Punctual delivery** needs the external trigger in `ops/README.md`. It
   requires a fine-grained PAT with `Actions: write`, scoped to this repository
   alone — not the existing token, which has `contents: write`.
-- **The agent loop** (Plan, Act, Observe, Eval) is not built. The record it will
-  need is already accumulating: `signals` with verdicts, `scan_stats` with
-  rejection reasons, `paper_positions` with R-multiples and exit reasons, across
-  two rule sets. Two design questions are open — whether Plan becomes an LLM
-  decision or stays deterministic with the intelligence only in Eval, and
-  whether a proposal may ever loosen a filter or only tighten and re-weight.
+- **The agent loop is waiting on evidence, not on code.** It runs every
+  Saturday and currently reports which gate each finding is blocked by: 12 scan
+  days (has 3), 120 forward-return observations (has 0), 25 near-misses per
+  filter (has 0). The first forward returns land ten sessions after the first
+  scan under `scan_rejects`, so the earliest a finding can clear is late
+  September.
 - **Expectancy needs roughly 30 closed trades** before it means anything. There
-  are currently 2 open and 0 closed.
+  are currently 2 open and 0 closed. This gates the exit rules only; the screen
+  is judged on forward returns instead.
