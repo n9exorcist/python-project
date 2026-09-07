@@ -130,12 +130,35 @@ def trading_day(refresh: bool = False) -> str:
             df = scanner.last_complete(_source().daily_bars(probe, bars=5))
             if df is not None and len(df):
                 _SESSION = scanner.session_date(df)
+                _remember("last_session", _SESSION)
                 return _SESSION
         except Exception:
             continue
     _SESSION = date.today().isoformat()
     print(f"[session] no probe resolved; falling back to local date {_SESSION}")
     return _SESSION
+
+
+def _remember(key: str, value: str) -> None:
+    """Cache a fact the dashboard needs but must not pay a network call for.
+
+    The read-only dashboard has to know which session is the newest COMPLETE
+    one, or it cannot tell "the scan has not run" from "the scan is not due
+    yet" — the distinction the stale pill exists to make. Only the tape knows
+    that on a holiday, and only the jobs talk to the tape. Written only when the
+    value actually changes, so an idle run leaves swing.db untouched and does
+    not produce a commit.
+    """
+    con = sqlite3.connect(DB_PATH)
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+        cur = con.execute("SELECT v FROM meta WHERE k=?", (key,)).fetchone()
+        if cur and cur[0] == value:
+            return
+        con.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, value))
+        con.commit()
+    finally:
+        con.close()
 
 
 def today_ist() -> str:

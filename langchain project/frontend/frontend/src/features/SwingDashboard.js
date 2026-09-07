@@ -521,7 +521,7 @@ export default function SwingDashboard() {
     );
   }
 
-  const { scan, funnel, positions, closed, books, tokens, today, sectors, rules } = data;
+  const { scan, funnel, positions, closed, books, tokens, sectors, rules } = data;
   const markBySym = new Map((marks || []).map((m) => [`${m.book}:${m.id}`, m]));
 
   // One ruler across both sector panels.
@@ -557,8 +557,15 @@ export default function SwingDashboard() {
         </div>
         <div className="sw-head-right">
           {scan.scan_date ? (
+            /* "stale" now means the screen is behind the MARKET, not behind the
+               calendar. Before 15:30 IST there is no completed bar for today, so
+               a scan dated yesterday is current — the old pill compared against
+               date.today() and so read "last scan <yesterday>" every morning,
+               which looks broken and is not. */
             <span className={`sw-pill ${scan.stale ? "warn" : "ok"}`}>
-              {scan.stale ? `last scan ${scan.scan_date}` : `scanned today`}
+              {scan.stale
+                ? `scan due for ${scan.session}`
+                : `up to date · ${scan.scan_date} session`}
             </span>
           ) : (
             <span className="sw-pill">no scan yet</span>
@@ -681,7 +688,11 @@ export default function SwingDashboard() {
         title="Latest scan"
         subtitle={
           scan.scan_date
-            ? `${scan.scan_date}${scan.stale ? ` · today is ${today}` : ""}`
+            ? `${scan.scan_date} session` +
+              (scan.ran_at ? ` · screened ${scan.ran_at.replace("T", " ").slice(0, 16)}` : "") +
+              (scan.stale
+                ? ` · ${scan.session} has closed and has not been screened yet`
+                : " · this is the newest session that has closed")
             : "the screen has not run yet"
         }
         right={

@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -69,12 +70,52 @@ def _last_scan_date(con: sqlite3.Connection) -> str | None:
     return max(dates) if dates else None
 
 
+IST = ZoneInfo("Asia/Kolkata")
+MARKET_CLOSE = time(15, 30)
+
+
+def _expected_session(con: sqlite3.Connection) -> str:
+    """The newest session a scan could possibly have covered.
+
+    NOT date.today(). Between midnight and 15:30 IST there is no completed bar
+    for today, so a scan dated yesterday is perfectly current — comparing it to
+    the calendar day made the pill cry stale every single morning.
+
+    jobs.trading_day() writes the real answer here off the tape, which is the
+    only holiday-aware source. The fallback is a plain weekday walk, used before
+    the first job of the deployment has run.
+    """
+    if _table_exists(con, "meta"):
+        row = con.execute("SELECT v FROM meta WHERE k='last_session'").fetchone()
+        if row and row[0]:
+            return row[0]
+    now = datetime.now(IST)
+    d = now.date()
+    if now.time() < MARKET_CLOSE:
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:          # Sat/Sun are never sessions
+        d -= timedelta(days=1)
+    return d.isoformat()
+
+
+def _scan_ran_at(con: sqlite3.Connection, session: str) -> str | None:
+    if not _table_exists(con, "job_runs"):
+        return None
+    row = con.execute(
+        "SELECT ran_at FROM job_runs WHERE job='scan' AND session=?", (session,)
+    ).fetchone()
+    return row[0] if row else None
+
+
 def _latest_scan(con: sqlite3.Connection) -> dict[str, Any]:
+    expected = _expected_session(con)
     latest = _last_scan_date(con)
     if not latest:
-        return {"scan_date": None, "candidates": [], "note": "no scan has run yet"}
+        return {"scan_date": None, "session": expected, "candidates": [],
+                "note": "no scan has run yet"}
     if not _table_exists(con, "signals"):
-        return {"scan_date": latest, "candidates": [],
+        return {"scan_date": latest, "session": expected,
+                "stale": latest != expected, "candidates": [],
                 "note": "screen ran; nothing passed"}
 
     rows = con.execute(
@@ -85,7 +126,11 @@ def _latest_scan(con: sqlite3.Connection) -> dict[str, Any]:
     ).fetchall()
     return {
         "scan_date": latest,
-        "stale": latest != date.today().isoformat(),
+        # The newest session that HAS closed. Stale means the screen is behind
+        # the market, not behind the calendar.
+        "session": expected,
+        "stale": latest != expected,
+        "ran_at": _scan_ran_at(con, latest),
         "candidates": [dict(r) for r in rows],
         "note": None if rows else "screen ran; nothing passed",
     }
