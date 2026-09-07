@@ -98,6 +98,23 @@ def _expected_session(con: sqlite3.Connection) -> str:
     return d.isoformat()
 
 
+def _newest_session(con: sqlite3.Connection) -> str:
+    """The expected session, never older than one already screened.
+
+    meta.last_session is written by whichever job last resolved the tape, and a
+    long-lived scheduler caches that value per process — so it can lag. When it
+    did, the dashboard compared a 07-Sep scan against a 04-Sep expectation and
+    announced the screen was behind the market while it was in fact current.
+
+    A scan that ran FOR a session is proof that session closed, so it is a lower
+    bound on the answer. Taking the later of the two makes the pill self-correct
+    instead of trusting one cache to stay fresh.
+    """
+    expected = _expected_session(con)
+    latest = _last_scan_date(con)
+    return max(expected, latest) if latest else expected
+
+
 def _scan_ran_at(con: sqlite3.Connection, session: str) -> str | None:
     if not _table_exists(con, "job_runs"):
         return None
@@ -108,7 +125,7 @@ def _scan_ran_at(con: sqlite3.Connection, session: str) -> str | None:
 
 
 def _latest_scan(con: sqlite3.Connection) -> dict[str, Any]:
-    expected = _expected_session(con)
+    expected = _newest_session(con)
     latest = _last_scan_date(con)
     if not latest:
         return {"scan_date": None, "session": expected, "candidates": [],
