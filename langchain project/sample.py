@@ -2,11 +2,13 @@ import os
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq # New import
 
+from models import GROQ_MODEL
+
 load_dotenv()
 
 # Use the explicit version ID instead of the alias
 llm = ChatGroq(
-    model_name="llama-3.3-70b-versatile", # Or "llama3-8b-8192"
+    model_name=GROQ_MODEL,
     temperature=0,
     groq_api_key=os.getenv("GROQ_API_KEY")
 )

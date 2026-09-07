@@ -2,6 +2,8 @@ import os
 import asyncio
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
+
+from models import GROQ_MODEL
 from langchain.agents import create_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -15,7 +17,7 @@ async def scanner_main_client():
         raise ValueError("GROQ_API_KEY not found in environment or .env file")
 
     llm = ChatGroq(
-        model_name="llama-3.3-70b-versatile",
+        model_name=GROQ_MODEL,
         temperature=0,
         api_key=groq_api_key
     )

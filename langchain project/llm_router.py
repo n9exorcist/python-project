@@ -44,6 +44,9 @@ from litellm import Router
 # .env sits one directory above the repo root, hence find_dotenv().
 load_dotenv(find_dotenv())
 
+# Imported after load_dotenv: models.py reads GROQ_MODEL from the environment.
+from models import GROQ_MODEL_LITELLM  # noqa: E402
+
 litellm.drop_params = True          # providers disagree on accepted kwargs
 litellm.suppress_debug_info = True
 
@@ -140,7 +143,7 @@ _RAW_MODELS: list[dict[str, Any]] = [
         # something. Shares the 100K cap with the existing options job.
         "model_name": "fast",
         "litellm_params": {
-            "model": "groq/llama-3.3-70b-versatile",
+            "model": GROQ_MODEL_LITELLM,
             "api_key": GROQ_KEY,
         },
         "model_info": {"provider": "groq"},

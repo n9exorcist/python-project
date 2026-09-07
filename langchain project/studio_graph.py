@@ -14,6 +14,8 @@ import asyncio
 
 from dotenv import load_dotenv, find_dotenv
 from langchain_groq import ChatGroq
+
+from models import GROQ_MODEL
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from agents import build_supervisor_graph
@@ -25,7 +27,7 @@ load_dotenv(find_dotenv())
 MCP_SERVER_URL = "http://127.0.0.1:8000/sse"
 
 llm = ChatGroq(
-    model_name="llama-3.3-70b-versatile",
+    model_name=GROQ_MODEL,
     temperature=0,
     api_key=os.getenv("GROQ_API_KEY"),
     # Studio runs burn the same Groq quota as the app. Without this, they are

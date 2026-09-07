@@ -21,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from langchain_groq import ChatGroq
+
+from models import GROQ_MODEL
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -63,7 +65,7 @@ async def lifespan(app: FastAPI):
         await saver.setup()
 
         llm = ChatGroq(
-            model_name="llama-3.3-70b-versatile",
+            model_name=GROQ_MODEL,
             temperature=0,
             api_key=os.getenv("GROQ_API_KEY"),
             # Attached to the LLM itself, not just the request config, so calls made

@@ -42,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 DATASET_PATH = HERE / "dataset.json"
 RESULTS_DIR = HERE / "results"
 DEFAULT_BASE_URL = os.getenv("EVAL_BASE_URL", "http://127.0.0.1:8001")
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "llama-3.3-70b-versatile")
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "openai/gpt-oss-120b")
 # NOTE: This judges Groq output with a Groq-family model -> self-judging bias.
 # For rigor, point JUDGE_MODEL at a cross-family model (Gemini / GPT-4).
 PASS_THRESHOLD = 3  # faithfulness and relevance must both be >= this to "pass"
