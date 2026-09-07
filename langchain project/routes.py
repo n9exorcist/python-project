@@ -106,7 +106,7 @@ async def chat_stream(request: Request):
 
     async def event_generator():
         streamed_any = False
-        writer_pass = 0
+        pending_reset = False
         progress_floor = 0      # progress must never move backwards
         node_visits = {}
         # The graph is CYCLIC -- the supervisor and writer can each run several times --
@@ -161,13 +161,23 @@ async def chat_stream(request: Request):
                 name = event.get("name", "")
                 node = (event.get("metadata") or {}).get("langgraph_node")
 
-                # Reflection can send the draft back for a rewrite, so the writer
-                # may run more than once. Tell the UI to discard the previous draft
-                # instead of appending the new one to it.
-                if kind == "on_chain_start" and node == "writer":
-                    writer_pass += 1
-                    if writer_pass > 1:
-                        yield f"data: {json.dumps({'reset': True})}\n\n"
+                # Reflection can send the draft back for a rewrite, so the
+                # writer may run more than once. The UI must discard the previous
+                # draft rather than append to it.
+                #
+                # The reset is ARMED here and sent with the first replacement
+                # token, never on its own. `node` comes from metadata, which tags
+                # every nested runnable INSIDE the writer node, not just the node
+                # itself -- a fallback chain, a tools-bound model and the model
+                # each raise on_chain_start with node == "writer". Firing eagerly
+                # emitted several resets for one answer, and one of them landed
+                # after the text: resetLastMessage() wiped a finished answer off
+                # the screen and nothing refilled it.
+                #
+                # Deferring makes a stray chain start harmless by construction.
+                # If no replacement text ever arrives, nothing is discarded.
+                if kind == "on_chain_start" and node == "writer" and streamed_any:
+                    pending_reset = True
 
                 if kind == "on_chain_start" and name in node_progress_map:
                     pct, msg = node_progress_map[name]
@@ -198,18 +208,30 @@ async def chat_stream(request: Request):
                     if node != "writer":
                         continue
                     chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content"):
-                        content = chunk.content
-                        if isinstance(content, str) and content:
-                            streamed_any = True
-                            yield f"data: {json.dumps({'text': content})}\n\n"
-                        elif isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    text = block.get("text", "")
-                                    if text:
-                                        streamed_any = True
-                                        yield f"data: {json.dumps({'text': text})}\n\n"
+                    if not (chunk and hasattr(chunk, "content")):
+                        continue
+                    content = chunk.content
+                    if isinstance(content, str):
+                        pieces = [content]
+                    elif isinstance(content, list):
+                        # Gemini streams content blocks where Groq streams a str.
+                        pieces = [
+                            b.get("text", "")
+                            for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        ]
+                    else:
+                        pieces = []
+                    for text in pieces:
+                        if not text:
+                            continue
+                        if pending_reset:
+                            # Sent only now, immediately before the text that
+                            # replaces the draft being discarded.
+                            yield f"data: {json.dumps({'reset': True})}\n\n"
+                            pending_reset = False
+                        streamed_any = True
+                        yield f"data: {json.dumps({'text': text})}\n\n"
 
             # If nothing streamed (e.g. the input guardrail blocked and short-circuited),
             # emit the stored final_answer so the user still sees the refusal.
