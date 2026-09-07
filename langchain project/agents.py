@@ -22,10 +22,18 @@ Two controls keep it bounded and honest:
 Guardrails (input guard + writer output sanitizer) are preserved.
 """
 
+import os
 import uuid
 from typing import Annotated, Literal, TypedDict
 
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+    trim_messages,
+)
+from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -36,6 +44,63 @@ WORKERS = ("researcher", "web", "trading")
 MAX_DELEGATIONS = 4    # supervisor loop guard
 MAX_TOOL_ROUNDS = 2    # tool calls allowed per specialist visit
 MAX_REFLECT = 1        # rewrite attempts after self-critique
+
+# Groq's on-demand tier allows 8,000 tokens PER MINUTE across every chat model on
+# the account, and that ceiling counts the whole request. The graph resends the
+# full conversation to every specialist turn and again to the writer, so a thread
+# grows until one request crosses the line and comes back 413:
+#
+#     Request too large ... on tokens per minute (TPM): Limit 8000,
+#     Requested 13941
+#
+# The Gemini fallback catches those, but leaning on it means every long thread
+# pays a slower provider for a problem that is really unbounded context. These
+# two caps keep the request inside the primary's budget instead.
+MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "5000"))
+MAX_TOOL_CHARS = int(os.getenv("MAX_TOOL_CHARS", "4000"))
+
+
+def _cap_tool_output(msgs):
+    """Truncate oversized tool results rather than letting trim drop them whole.
+
+    One Tavily dump or a wide FAISS hit can outweigh the entire rest of the
+    conversation. Trimming by message would discard the retrieval the answer
+    depends on; truncating keeps the top of it, which is the ranked part.
+    """
+    out = []
+    for m in msgs:
+        text = m.content if isinstance(m.content, str) else str(m.content)
+        if isinstance(m, ToolMessage) and len(text) > MAX_TOOL_CHARS:
+            out.append(m.model_copy(update={
+                "content": text[:MAX_TOOL_CHARS] + "\n...[truncated]"
+            }))
+        else:
+            out.append(m)
+    return out
+
+
+def _fit(msgs):
+    """Bound the history handed to a model.
+
+    start_on="human" matters: trimming to a boundary that begins with a
+    ToolMessage would leave a tool result whose originating tool_call has been
+    dropped, and providers reject that outright.
+    """
+    capped = _cap_tool_output(msgs)
+    try:
+        return trim_messages(
+            capped,
+            max_tokens=MAX_CONTEXT_TOKENS,
+            token_counter=count_tokens_approximately,
+            strategy="last",
+            start_on="human",
+            include_system=False,
+            allow_partial=False,
+        )
+    except Exception:
+        # Never let a trimming edge case take down a request that would
+        # otherwise have succeeded.
+        return capped
 
 
 class GraphState(TypedDict, total=False):
@@ -211,7 +276,7 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
                 f"You are the {name} specialist on a market-analysis team. {focus}{extra} "
                 "Format dates for tools as DD-MM-YYYY. The current year is 2026."
             )
-            resp = await active_llm.ainvoke([SystemMessage(content=sys)] + msgs)
+            resp = await active_llm.ainvoke([SystemMessage(content=sys)] + _fit(msgs))
             return {"messages": [resp], "active_agent": name, "tool_rounds": tool_rounds}
         return specialist
 
@@ -247,7 +312,7 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
                        "Rewrite the answer to fix it.")
 
         resp = await llm.ainvoke(
-            [SystemMessage(content=prompt)] + state.get("messages", []) +
+            [SystemMessage(content=prompt)] + _fit(state.get("messages", [])) +
             [HumanMessage(content="Write the final user-facing answer now.")]
         )
         raw = resp.content if isinstance(resp.content, str) else str(resp.content)

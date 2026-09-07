@@ -4,6 +4,7 @@ import React, {
   useRef,
   useLayoutEffect,
   useMemo,
+  useCallback,
 } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import {
@@ -55,6 +56,10 @@ function App() {
   const abortControllerRef = useRef(null);
   const textareaRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  // Whether the view should follow new tokens. Set false the moment the reader
+  // scrolls up, so auto-scroll never yanks them away from something they went
+  // back to read, and true again when they return to the bottom.
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     if (threadId) {
@@ -104,12 +109,24 @@ function App() {
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }, [input]);
 
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = fromBottom < 80;
+  }, []);
+
   useEffect(() => {
     const container = messagesContainerRef.current;
-    if (!container) return;
+    if (!container || !stickToBottomRef.current) return;
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: "smooth",
+      // "smooth" cannot keep up with streaming. Every token dispatches a new
+      // scrollTo, and each one restarts the animation from wherever the last
+      // was interrupted, so the view falls permanently behind the text and the
+      // reader has to scroll by hand. Instant while tokens are arriving;
+      // smooth for the discrete jump when a turn ends.
+      behavior: isGenerating ? "auto" : "smooth",
     });
   }, [messages, isGenerating]);
 
@@ -433,7 +450,11 @@ function App() {
                 </div>
               </header>
 
-              <section ref={messagesContainerRef} className="messages-area">
+              <section
+                ref={messagesContainerRef}
+                className="messages-area"
+                onScroll={handleMessagesScroll}
+              >
                 {messages.length === 0 ? (
                   <div className="empty-state">
                     <div className="empty-icon">✦</div>
