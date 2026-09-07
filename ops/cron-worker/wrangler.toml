@@ -1,0 +1,12 @@
+name = "swing-agent-cron"
+main = "worker.js"
+compatibility_date = "2026-09-07"
+
+# UTC. IST is UTC+05:30, so these are 09:16 and 15:40 IST, Monday to Friday.
+# Cloudflare fires these on time; that is the entire point of the Worker.
+[triggers]
+crons = ["46 3 * * 1-5", "10 10 * * 1-5"]
+
+# GITHUB_TOKEN is a secret, never a var:
+#   wrangler secret put GITHUB_TOKEN
+# Fine-grained, this repo only, Actions: Read and write. Nothing else.
