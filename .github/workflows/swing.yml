@@ -16,10 +16,13 @@ on:
     # record. So every job gets spare slots, and every job is a no-op when the
     # session it is about has already been done — see job_runs in jobs.py.
     #
-    # FILL — 09:16 / 11:00 / 13:00 IST. job_fill refuses to fill unless the
-    # newest bar is today's, and leaves the queue intact when it refuses, so a
-    # late first slot is caught by a later one rather than booking a stale open.
+    # BRIEF — 09:16 / 10:00 / 11:00 / 13:00 IST. One message: last night's
+    # screen, what filled at today's open, and where the book stands. It runs
+    # the fill itself, so the morning is one notification rather than two.
+    # job_brief refuses to send before 09:15 IST and claims the day once sent,
+    # so the spare slots only ever cover for a dropped or delayed first slot.
     - cron: "46 3 * * 1-5"
+    - cron: "30 4 * * 1-5"
     - cron: "30 5 * * 1-5"
     - cron: "30 7 * * 1-5"
 
@@ -46,7 +49,7 @@ on:
         required: true
         default: "scan"
         type: choice
-        options: [scan, fill, mark, report, mark+scan]
+        options: [brief, scan, fill, mark, report, mark+scan]
       force:
         description: "Re-run even if this session is already done"
         required: false
@@ -97,7 +100,7 @@ jobs:
         id: pick
         run: |
           case "${{ github.event.schedule }}" in
-            "46 3 * * 1-5"|"30 5 * * 1-5"|"30 7 * * 1-5")   CMDS="fill" ;;
+            "46 3 * * 1-5"|"30 4 * * 1-5"|"30 5 * * 1-5"|"30 7 * * 1-5") CMDS="brief" ;;
             "10 10 * * 1-5"|"10 12 * * 1-5"|"10 14 * * 1-5") CMDS="mark scan" ;;
             "30 3 * * 6"|"30 7 * * 6")                       CMDS="report" ;;
             *)                                               CMDS="${{ inputs.command }}" ;;

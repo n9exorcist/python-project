@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 import requests
@@ -223,8 +223,11 @@ def _funnel_line(day: str, passed: int = 0) -> str:
     rejects = _scan_rejects(day)
     screened = sum(rejects.values()) + passed
     head = f"Screened {screened} symbols"
-    n_universe = len(get_universe())
-    if screened != n_universe:
+    # Only compare against the universe if something has ALREADY resolved it.
+    # Resolving costs two HTTP requests against Moneycontrol, and the morning
+    # brief has no business paying that — or failing — merely to print a count.
+    n_universe = len(_UNIVERSE) if _UNIVERSE else 0
+    if n_universe and screened != n_universe:
         head += f" (universe holds {n_universe})"
     if not rejects:
         return head + "."
@@ -374,7 +377,7 @@ def job_scan() -> None:
 # ---------------------------------------------------------------------------
 # 09:16 IST — fill queued entries at the open
 # ---------------------------------------------------------------------------
-def job_fill() -> None:
+def job_fill(announce: bool = True) -> list[str]:
     con = sqlite3.connect(DB_PATH)
     try:
         con.execute("CREATE TABLE IF NOT EXISTS entry_queue ("
@@ -383,7 +386,7 @@ def job_fill() -> None:
         rows = con.execute("SELECT symbol, signal_date, atr FROM entry_queue").fetchall()
         if not rows:
             print("[fill] entry queue is empty")
-            return
+            return []
         src = _source()
 
         # Unlike every other job this one wants the bar that is still FORMING:
@@ -397,12 +400,13 @@ def job_fill() -> None:
             bar_day = scanner.session_date(probe)
         except Exception as e:
             print(f"[fill] cannot read the tape ({e}); leaving the queue intact")
-            return
+            return []
         if bar_day != today:
-            notify(f"{today}: fill skipped — the newest bar is {bar_day}, so "
+            msg = (f"{today}: fill skipped — the newest bar is {bar_day}, so "
                    f"there is no open to fill against yet. {len(rows)} "
                    f"entries stay queued for the next slot.")
-            return
+            notify(msg) if announce else print(msg)
+            return []
 
         msgs: list[str] = []
         for sym, sig_date, atr in rows:
@@ -416,8 +420,9 @@ def job_fill() -> None:
                              entry_date=bar_day)
         con.execute("DELETE FROM entry_queue")
         con.commit()
-        if msgs:
+        if msgs and announce:
             notify("ENTRIES AT OPEN\n" + "\n".join(msgs))
+        return msgs
     finally:
         con.close()
 
@@ -457,6 +462,101 @@ def job_mark() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 09:16 IST — the one morning message
+# ---------------------------------------------------------------------------
+# Everything the screen decided last night, everything filling at today's open,
+# and where the book stands — in a single message, sent whether or not anything
+# happened. Three separate notifications that each go quiet on an idle day are
+# indistinguishable from a dead agent, which is the failure mode this whole
+# system keeps rediscovering.
+BRIEF_BOOK = "FIXED"
+
+
+def _open_positions(con: sqlite3.Connection, session: str) -> list[str]:
+    rows = con.execute(
+        "SELECT symbol, entry, stop, target, qty, entry_date FROM paper_positions "
+        "WHERE status='open' AND book=? ORDER BY entry_date, symbol",
+        (BRIEF_BOOK,),
+    ).fetchall()
+    out = []
+    for sym, entry, stop, target, qty, ed in rows:
+        try:
+            held = (date.fromisoformat(session) - date.fromisoformat(ed)).days
+        except Exception:
+            held = 0
+        out.append(f"  {sym} x{qty} @ {entry} · SL {stop} · TGT {target} "
+                   f"· {max(held, 0)}/{pb.TIME_STOP_DAYS} sessions")
+    return out
+
+
+def job_brief() -> None:
+    day = today_ist()
+    now = datetime.now(ZoneInfo(TZ))
+
+    # A brief sent at 02:00 because a slot drifted past midnight is not a
+    # morning brief, and worse, it would claim the day and suppress the real
+    # one. Before the open there is nothing to report anyway.
+    if now.time() < time(9, 15):
+        print(f"[brief] {now:%H:%M} IST is before the open; not the morning yet")
+        return
+    if already_ran("brief", day):
+        print(f"[brief] {day} already sent")
+        return
+
+    session = trading_day()
+
+    # Fill first, then report it, so the morning is one message and not two.
+    fills = job_fill(announce=False)
+
+    con = sqlite3.connect(DB_PATH)
+    try:
+        con.executescript(
+            "CREATE TABLE IF NOT EXISTS signals ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, scan_date TEXT, "
+            "close REAL, ema20 REAL, ema50 REAL, ema200 REAL, rsi14 REAL, "
+            "vol_ratio REAL, ext_pct REAL, turnover_cr REAL, atr14 REAL, "
+            "atr_pct REAL, screen_version TEXT, llm_verdict TEXT, "
+            "created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(symbol, scan_date));"
+            "CREATE TABLE IF NOT EXISTS paper_positions (id INTEGER PRIMARY KEY);"
+        )
+        last = con.execute("SELECT MAX(scan_date) FROM signals").fetchone()[0]
+        cands = con.execute(
+            "SELECT symbol, close, rsi14, vol_ratio, ext_pct, llm_verdict "
+            "FROM signals WHERE scan_date=? ORDER BY symbol", (last,)
+        ).fetchall() if last else []
+        opens = _open_positions(con, session)
+    finally:
+        con.close()
+
+    lines = [f"MORNING BRIEF — {day}", ""]
+
+    if not last:
+        lines.append("LAST SCREEN: none yet.")
+    else:
+        lines.append(f"LAST SCREEN — {last} session")
+        lines.append(f"  {_funnel_line(last, len(cands))}")
+        for sym, close, rsi, vol, ext, verdict in cands:
+            lines.append(f"  {(verdict or 'screened').upper():9s} {sym}")
+            lines.append(f"            {close} · RSI {rsi} · vol x{vol} "
+                         f"· {ext:+.1f}% vs 20EMA")
+        if last != session:
+            # Says out loud that the screen is behind the market, rather than
+            # letting a stale date sit there looking current.
+            lines.append(f"  NOTE: {session} has closed and was not screened.")
+
+    lines += ["", "AT TODAY'S OPEN"]
+    fixed_fills = [m for m in fills if m.startswith(BRIEF_BOOK)] or fills
+    lines += [f"  {m}" for m in fixed_fills] if fixed_fills else ["  nothing queued to fill."]
+
+    lines += ["", f"OPEN POSITIONS ({len(opens)})"]
+    lines += opens if opens else ["  none."]
+
+    lines += ["", "Next screen after today's 15:30 close."]
+    notify("\n".join(lines))
+    record_run("brief", day)
+
+
+# ---------------------------------------------------------------------------
 # Saturday 09:00 IST — weekly report
 # ---------------------------------------------------------------------------
 def job_report() -> None:
@@ -475,7 +575,7 @@ def job_report() -> None:
 def build() -> BlockingScheduler:
     s = BlockingScheduler(timezone=TZ)
     wk = "mon-fri"
-    s.add_job(job_fill,   CronTrigger(day_of_week=wk, hour=9,  minute=16, timezone=TZ))
+    s.add_job(job_brief,  CronTrigger(day_of_week=wk, hour=9,  minute=16, timezone=TZ))
     s.add_job(job_mark,   CronTrigger(day_of_week=wk, hour="9-15", minute="*/15", timezone=TZ))
     s.add_job(job_scan,   CronTrigger(day_of_week=wk, hour=15, minute=45, timezone=TZ))
     s.add_job(job_report, CronTrigger(day_of_week="sat", hour=9, minute=0, timezone=TZ))
@@ -488,7 +588,7 @@ if __name__ == "__main__":
         os.environ["FORCE_RUN"] = "1"
     argv = [a for a in sys.argv[1:] if not a.startswith("--")]
     if argv:
-        {"scan": job_scan, "fill": job_fill,
+        {"scan": job_scan, "fill": job_fill, "brief": job_brief,
          "mark": job_mark, "report": job_report}[argv[0]]()
     else:
         print(f"scheduler up ({TZ}); universe = {len(get_universe())} symbols")
