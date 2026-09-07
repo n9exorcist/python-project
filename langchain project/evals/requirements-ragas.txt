@@ -1,0 +1,4 @@
+ragas==0.4.3
+instructor
+pillow
+diskcache
