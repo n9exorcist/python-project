@@ -33,12 +33,16 @@ load_dotenv(find_dotenv())
 # ----------------------------------------------------------------------------
 DB_PATH = os.getenv("AGENT_DB", "memory.db")
 
-SCREEN_VERSION = "v1.0"
+# The five tunable thresholds live in rules.py now, as a database overlay on a
+# hand-authored floor, so a change is recorded rather than merely made, and
+# every signals row can be attributed to the numbers in force when it was
+# written. rules.BASELINE holds the same values this module used to define.
+import rules as _rules
 
-RSI_MIN, RSI_MAX = 55.0, 72.0
-VOL_MULTIPLE = 2.0            # vs 20-day average volume
-MAX_EXT_FROM_EMA20 = 8.0      # percent; beyond this the stop is too far
-MIN_TURNOVER_CR = 2.0         # daily traded value floor, in Rs crore
+SCREEN_VERSION = _rules.BASE_VERSION   # superseded per run by rules.version()
+
+# Not tunable by the agent, deliberately: these are not calibration, they are
+# the conditions under which a bar means anything at all.
 MIN_HISTORY_BARS = 220        # need a real 200 EMA, not a warm-up artefact
 CIRCUIT_BAND = 19.5           # percent move that implies a circuit lock
 
@@ -166,15 +170,28 @@ def atr_wilder(df: pd.DataFrame, period: int = 14) -> pd.Series:
 # ----------------------------------------------------------------------------
 # The screen
 # ----------------------------------------------------------------------------
-def evaluate(symbol: str, df: pd.DataFrame) -> tuple[Candidate | None, str]:
+def evaluate(symbol: str, df: pd.DataFrame,
+             rules: dict | None = None) -> tuple[Candidate | None, str, dict | None]:
     """Return (candidate, reason). Candidate is None when the symbol fails.
 
     The reason string is stored for every rejection. That is what makes the
     weekly report able to say *which filter* is doing the work — without it
     you only ever see the names that passed.
     """
+    # The snapshot returned alongside the reason is the point of this signature.
+    # Counting rejections by reason tells you a filter is busy; it cannot tell
+    # you whether the filter is RIGHT. A name that missed on volume at 1.98x and
+    # one that missed at 0.30x are the same row in an aggregate count, and no
+    # quantity of that data will ever reveal a threshold sitting in the wrong
+    # place. eval.py needs the distance from the line, not the fact of it.
+    rules = rules or _rules.effective(DB_PATH)
+    rsi_min, rsi_max = rules["RSI_MIN"], rules["RSI_MAX"]
+    vol_multiple = rules["VOL_MULTIPLE"]
+    max_ext = rules["MAX_EXT_FROM_EMA20"]
+    min_turnover = rules["MIN_TURNOVER_CR"]
+
     if df is None or len(df) < MIN_HISTORY_BARS:
-        return None, "insufficient_history"
+        return None, "insufficient_history", None
 
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
@@ -200,27 +217,36 @@ def evaluate(symbol: str, df: pd.DataFrame) -> tuple[Candidate | None, str]:
     high = float(df["high"].iloc[last])
     low = float(df["low"].iloc[last])
 
+    snap = {
+        "close": round(c, 2),
+        "rsi14": round(r, 2),
+        "vol_ratio": round(vol_ratio, 2),
+        "ext_pct": round(ext_pct, 2),
+        "turnover_cr": round(turnover_cr, 2),
+        "atr_pct": round(a / c * 100.0, 2) if c else None,
+    }
+
     # --- hard exclusions first, cheapest and most decisive -------------------
     if abs(day_move) >= CIRCUIT_BAND and (c == high or c == low):
-        return None, "circuit_locked"
-    if turnover_cr < MIN_TURNOVER_CR:
-        return None, "illiquid"
+        return None, "circuit_locked", snap
+    if turnover_cr < min_turnover:
+        return None, "illiquid", snap
 
     # --- trend structure ----------------------------------------------------
     if not (c > v20 and c > v50 and c > v200):
-        return None, "below_ema"
+        return None, "below_ema", snap
     if not (v20 > v50 > v200):
-        return None, "ema_not_stacked"
+        return None, "ema_not_stacked", snap
     if not (e20.iloc[last] > e20.iloc[last - 5] and e50.iloc[last] > e50.iloc[last - 5]):
-        return None, "ema_not_rising"
+        return None, "ema_not_rising", snap
 
     # --- momentum and participation -----------------------------------------
-    if not (RSI_MIN <= r <= RSI_MAX):
-        return None, "rsi_out_of_band"
-    if vol_ratio < VOL_MULTIPLE:
-        return None, "volume_thin"
-    if ext_pct > MAX_EXT_FROM_EMA20:
-        return None, "too_extended"
+    if not (rsi_min <= r <= rsi_max):
+        return None, "rsi_out_of_band", snap
+    if vol_ratio < vol_multiple:
+        return None, "volume_thin", snap
+    if ext_pct > max_ext:
+        return None, "too_extended", snap
 
     return (
         Candidate(
@@ -238,6 +264,7 @@ def evaluate(symbol: str, df: pd.DataFrame) -> tuple[Candidate | None, str]:
             atr_pct=round(a / c * 100.0, 2),
         ),
         "pass",
+        snap,
     )
 
 
@@ -257,21 +284,28 @@ def scan(
     """
     passed: list[Candidate] = []
     rejects: dict[str, int] = {}
+    detail: list[tuple] = []          # (symbol, reason, snapshot) per rejection
     seen: list[str] = []
+
+    active = _rules.effective(db_path or DB_PATH)
+    ver = _rules.version(active)
 
     for sym in symbols:
         try:
             df = last_complete(source.daily_bars(sym, bars=261))
         except Exception:
             rejects["fetch_error"] = rejects.get("fetch_error", 0) + 1
+            detail.append((sym, "fetch_error", None))
             continue
         if df is not None and len(df):
             seen.append(session_date(df))
-        cand, reason = evaluate(sym, df)
+        cand, reason, snap = evaluate(sym, df, active)
         if cand:
+            cand.screen_version = ver
             passed.append(cand)
         else:
             rejects[reason] = rejects.get(reason, 0) + 1
+            detail.append((sym, reason, snap))
 
     day = session or (max(seen) if seen else date.today().isoformat())
 
@@ -285,7 +319,7 @@ def scan(
     if stale:
         rejects["stale_data"] = rejects.get("stale_data", 0) + stale
 
-    _persist(fresh, rejects, db_path or DB_PATH, day)
+    _persist(fresh, rejects, db_path or DB_PATH, day, detail, ver)
     return fresh
 
 
@@ -309,11 +343,30 @@ CREATE TABLE IF NOT EXISTS scan_stats (
     scan_date TEXT, reason TEXT, n INTEGER,
     PRIMARY KEY (scan_date, reason)
 );
+-- One row per REJECTED symbol, carrying what it actually measured. scan_stats
+-- keeps the aggregate because the funnel reads it cheaply; this table is what
+-- the agent loop learns from, and the two are written together so they can
+-- never disagree about a day.
+CREATE TABLE IF NOT EXISTS scan_rejects (
+    scan_date      TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    reason         TEXT NOT NULL,
+    close          REAL,
+    rsi14          REAL,
+    vol_ratio      REAL,
+    ext_pct        REAL,
+    turnover_cr    REAL,
+    atr_pct        REAL,
+    screen_version TEXT,
+    PRIMARY KEY (scan_date, symbol)
+);
+CREATE INDEX IF NOT EXISTS ix_rejects_reason ON scan_rejects(reason, scan_date);
 """
 
 
 def _persist(cands: list[Candidate], rejects: dict[str, int], db_path: str,
-             session: str | None = None) -> None:
+             session: str | None = None, detail: list[tuple] | None = None,
+             ver: str | None = None) -> None:
     con = sqlite3.connect(db_path)
     try:
         con.executescript(SCHEMA)
@@ -327,6 +380,7 @@ def _persist(cands: list[Candidate], rejects: dict[str, int], db_path: str,
         # The day's picture has to be replaced whole.
         con.execute("DELETE FROM signals WHERE scan_date=?", (today,))
         con.execute("DELETE FROM scan_stats WHERE scan_date=?", (today,))
+        con.execute("DELETE FROM scan_rejects WHERE scan_date=?", (today,))
 
         for c in cands:
             d = asdict(c)
@@ -340,6 +394,16 @@ def _persist(cands: list[Candidate], rejects: dict[str, int], db_path: str,
             con.execute(
                 "INSERT OR REPLACE INTO scan_stats (scan_date, reason, n) VALUES (?,?,?)",
                 (today, reason, n),
+            )
+        for sym, reason, snap in (detail or []):
+            snap = snap or {}
+            con.execute(
+                "INSERT OR REPLACE INTO scan_rejects (scan_date, symbol, reason, close, "
+                "rsi14, vol_ratio, ext_pct, turnover_cr, atr_pct, screen_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (today, sym, reason, snap.get("close"), snap.get("rsi14"),
+                 snap.get("vol_ratio"), snap.get("ext_pct"), snap.get("turnover_cr"),
+                 snap.get("atr_pct"), ver),
             )
         con.commit()
     finally:

@@ -559,6 +559,27 @@ def job_brief() -> None:
 # ---------------------------------------------------------------------------
 # Saturday 09:00 IST — weekly report
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Saturday — the agent loop
+# ---------------------------------------------------------------------------
+def job_eval() -> None:
+    """Observe, Eval, Plan, Act. Weekly, because the evidence is weekly.
+
+    Run before job_report so the report goes out with the week's rule changes
+    already reflected in it. Keyed by ISO week like the report: the loop reading
+    the same evidence twice would produce the same proposal twice, and applying
+    a tightening twice walks the threshold at double the intended rate.
+    """
+    week = datetime.now(ZoneInfo(TZ)).strftime("%G-W%V")
+    if already_ran("eval", week):
+        print(f"[eval] {week} already run")
+        return
+    import eval as agent_loop
+    text = agent_loop.run(DB_PATH)
+    notify(text)
+    record_run("eval", week)
+
+
 def job_report() -> None:
     # Keyed by ISO week, so a spare Saturday slot cannot send the same report
     # twice — and a week whose slot GitHub dropped entirely is still picked up
@@ -578,6 +599,7 @@ def build() -> BlockingScheduler:
     s.add_job(job_brief,  CronTrigger(day_of_week=wk, hour=9,  minute=16, timezone=TZ))
     s.add_job(job_mark,   CronTrigger(day_of_week=wk, hour="9-15", minute="*/15", timezone=TZ))
     s.add_job(job_scan,   CronTrigger(day_of_week=wk, hour=15, minute=45, timezone=TZ))
+    s.add_job(job_eval,   CronTrigger(day_of_week="sat", hour=8, minute=30, timezone=TZ))
     s.add_job(job_report, CronTrigger(day_of_week="sat", hour=9, minute=0, timezone=TZ))
     return s
 
@@ -589,7 +611,7 @@ if __name__ == "__main__":
     argv = [a for a in sys.argv[1:] if not a.startswith("--")]
     if argv:
         {"scan": job_scan, "fill": job_fill, "brief": job_brief,
-         "mark": job_mark, "report": job_report}[argv[0]]()
+         "mark": job_mark, "report": job_report, "eval": job_eval}[argv[0]]()
     else:
         print(f"scheduler up ({TZ}); universe = {len(get_universe())} symbols")
         build().start()

@@ -37,8 +37,10 @@ on:
     - cron: "10 12 * * 1-5"
     - cron: "10 14 * * 1-5"
 
-    # REPORT — 09:00 / 13:00 IST Saturday. Keyed by ISO week, so the spare
-    # cannot send the same report twice.
+    # EVAL + REPORT — 09:00 / 13:00 IST Saturday. The agent loop runs first so
+    # the week's report reflects any rule change it made. Both are keyed by ISO
+    # week, so the spare slot cannot send either twice — and, more importantly,
+    # cannot apply the same tightening twice.
     - cron: "30 3 * * 6"
     - cron: "30 7 * * 6"
 
@@ -49,7 +51,7 @@ on:
         required: true
         default: "scan"
         type: choice
-        options: [brief, scan, fill, mark, report, mark+scan]
+        options: [brief, scan, fill, mark, report, eval, mark+scan]
       force:
         description: "Re-run even if this session is already done"
         required: false
@@ -102,7 +104,7 @@ jobs:
           case "${{ github.event.schedule }}" in
             "46 3 * * 1-5"|"30 4 * * 1-5"|"30 5 * * 1-5"|"30 7 * * 1-5") CMDS="brief" ;;
             "10 10 * * 1-5"|"10 12 * * 1-5"|"10 14 * * 1-5") CMDS="mark scan" ;;
-            "30 3 * * 6"|"30 7 * * 6")                       CMDS="report" ;;
+            "30 3 * * 6"|"30 7 * * 6")                       CMDS="eval report" ;;
             *)                                               CMDS="${{ inputs.command }}" ;;
           esac
           # the dispatch choice "mark+scan" is two commands
