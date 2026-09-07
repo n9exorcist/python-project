@@ -161,6 +161,13 @@ def mark_to_market(con: sqlite3.Connection, bars: dict[str, dict]) -> list[str]:
         bar = bars.get(sym)
         if not bar:
             continue
+        # Never mark a position against a bar older than its own entry. The
+        # marking job now uses the last COMPLETE session, so a run before the
+        # 15:30 close is holding yesterday's bar — and testing today's entry
+        # against yesterday's low would book a stop on a range the position was
+        # never exposed to. It also makes `held` negative.
+        if bar["date"] < entry_date:
+            continue
         risk = entry - stop
         hit_stop = bar["low"] <= stop
         hit_tgt = bar["high"] >= target

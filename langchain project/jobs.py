@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -22,6 +23,7 @@ import analyst
 import paper_broker as pb
 from llm_router import daily_summary
 import universe
+import scanner
 from scanner import YFinanceSource, scan
 
 DB_PATH = os.getenv("AGENT_DB", "memory.db")
@@ -89,6 +91,89 @@ def notify(text: str) -> bool:
 
 def _source():
     return YFinanceSource()
+
+
+# ---------------------------------------------------------------------------
+# Which session, and has this job already done it
+# ---------------------------------------------------------------------------
+# The scheduler in build() fires on the wall clock, which is honest when the
+# process is a long-lived daemon. It is not honest on GitHub Actions: the
+# `schedule` event is best-effort, and this repo's crons have started anywhere
+# from +38 minutes to +12 hours after their slot. Two consequences, both fixed
+# here rather than in the workflow, because the workflow cannot know either
+# answer:
+#
+#   1. The trading day has to come from the tape, not from date.today(). See
+#      scanner.last_complete / scanner.session_date.
+#   2. If a slot can be silently dropped, the schedule needs spare slots — and
+#      spare slots are only safe if a second run for a session already done is
+#      a no-op. That is what job_runs records.
+_SESSION: str | None = None
+
+# Probes for the session date. Large, liquid, and never suspended — if all
+# three fail to fetch, the run has no price feed at all and the fallback to the
+# local clock is the least of its problems.
+_SESSION_PROBES = ("RELIANCE", "TCS", "INFY")
+
+
+def trading_day(refresh: bool = False) -> str:
+    """The session this run is about, read off the tape.
+
+    Cached per process: every job wants the same answer, and three of them run
+    back to back inside one CI job.
+    """
+    global _SESSION
+    if _SESSION and not refresh:
+        return _SESSION
+    for probe in _SESSION_PROBES:
+        try:
+            df = scanner.last_complete(_source().daily_bars(probe, bars=5))
+            if df is not None and len(df):
+                _SESSION = scanner.session_date(df)
+                return _SESSION
+        except Exception:
+            continue
+    _SESSION = date.today().isoformat()
+    print(f"[session] no probe resolved; falling back to local date {_SESSION}")
+    return _SESSION
+
+
+def today_ist() -> str:
+    return datetime.now(ZoneInfo(TZ)).date().isoformat()
+
+
+def _job_runs_con() -> sqlite3.Connection:
+    con = sqlite3.connect(DB_PATH)
+    con.execute("CREATE TABLE IF NOT EXISTS job_runs ("
+                "job TEXT, session TEXT, ran_at TEXT, "
+                "PRIMARY KEY (job, session))")
+    return con
+
+
+def already_ran(job: str, session: str) -> bool:
+    if os.getenv("FORCE_RUN") == "1":
+        return False
+    con = _job_runs_con()
+    try:
+        return con.execute("SELECT 1 FROM job_runs WHERE job=? AND session=?",
+                           (job, session)).fetchone() is not None
+    finally:
+        con.close()
+
+
+def record_run(job: str, session: str) -> None:
+    """Only ever called after the work actually happened.
+
+    Recording on the skip path too would make every spare slot dirty swing.db
+    and produce a commit per no-op run.
+    """
+    con = _job_runs_con()
+    try:
+        con.execute("INSERT OR REPLACE INTO job_runs VALUES (?,?,?)",
+                    (job, session, datetime.now(ZoneInfo(TZ)).isoformat(timespec="seconds")))
+        con.commit()
+    finally:
+        con.close()
 
 
 # Above this share of the universe failing to fetch, the day's screen is not
@@ -160,9 +245,12 @@ def _scan_rejects(day: str) -> dict[str, int]:
 # 15:45 IST — the scan
 # ---------------------------------------------------------------------------
 def job_scan() -> None:
-    today = date.today().isoformat()
+    today = trading_day()
+    if already_ran("scan", today):
+        print(f"[scan] session {today} already screened; nothing to do")
+        return
     syms = get_universe(refresh=True)
-    cands = scan(syms, _source(), db_path=DB_PATH)
+    cands = scan(syms, _source(), db_path=DB_PATH, session=today)
 
     failed = _scan_rejects(today).get("fetch_error", 0)
     degraded = failed >= max(1, int(len(syms) * FETCH_FAIL_ALERT))
@@ -175,7 +263,12 @@ def job_scan() -> None:
         )
 
     if not cands:
+        # A degraded run is deliberately NOT recorded as done. Yahoo rate-limits
+        # datacentre IPs in bursts, so the honest response to "40% of the
+        # universe would not fetch" is to let a later slot try again — which is
+        # only possible if this one does not claim the session.
         if not degraded:
+            record_run("scan", today)
             # Always say how many symbols were examined, and which filter did the
             # work. "No setups today" on its own is unreadable: it looks the same
             # whether the screen swept 200 names or quietly shrank to 13 because
@@ -193,7 +286,7 @@ def job_scan() -> None:
     # earlier version printed only verdicts — so a day where exactly one name
     # passed announced "1 of 8 passed the screen" and then named nothing at all.
     # The screen's own numbers are the point; the analyst is commentary on top.
-    lines = [f"SCAN {date.today()} — {len(cands)} of {len(syms)} passed the screen"]
+    lines = [f"SCAN {today} — {len(cands)} of {len(syms)} passed the screen"]
     sec = _sector_line()
     if sec:
         lines.append(sec)
@@ -252,6 +345,8 @@ def job_scan() -> None:
     finally:
         con.close()
 
+    record_run("scan", today)
+
 
 # ---------------------------------------------------------------------------
 # 09:16 IST — fill queued entries at the open
@@ -264,8 +359,28 @@ def job_fill() -> None:
                     "PRIMARY KEY (symbol, signal_date))")
         rows = con.execute("SELECT symbol, signal_date, atr FROM entry_queue").fetchall()
         if not rows:
+            print("[fill] entry queue is empty")
             return
         src = _source()
+
+        # Unlike every other job this one wants the bar that is still FORMING:
+        # the open price is final at 09:15 even though the session has hours
+        # left to run. So no last_complete() here — which makes the date check
+        # mandatory instead. A run that drifts past midnight would otherwise
+        # read yesterday's bar and book entries at an open a full day stale.
+        today = today_ist()
+        try:
+            probe = src.daily_bars(_SESSION_PROBES[0], bars=2)
+            bar_day = scanner.session_date(probe)
+        except Exception as e:
+            print(f"[fill] cannot read the tape ({e}); leaving the queue intact")
+            return
+        if bar_day != today:
+            notify(f"{today}: fill skipped — the newest bar is {bar_day}, so "
+                   f"there is no open to fill against yet. {len(rows)} "
+                   f"entries stay queued for the next slot.")
+            return
+
         msgs: list[str] = []
         for sym, sig_date, atr in rows:
             try:
@@ -274,7 +389,8 @@ def job_fill() -> None:
             except Exception as e:
                 msgs.append(f"{sym}: no open price ({e})")
                 continue
-            msgs += pb.enter(con, sym, sig_date, open_px, atr or open_px * 0.03)
+            msgs += pb.enter(con, sym, sig_date, open_px, atr or open_px * 0.03,
+                             entry_date=bar_day)
         con.execute("DELETE FROM entry_queue")
         con.commit()
         if msgs:
@@ -297,11 +413,17 @@ def job_mark() -> None:
         src, bars = _source(), {}
         for s in syms:
             try:
-                df = src.daily_bars(s, bars=2)
+                df = scanner.last_complete(src.daily_bars(s, bars=3))
+                if df is None or not len(df):
+                    continue
+                # The bar's own date, not the clock. paper_broker subtracts this
+                # from entry_date to age the time stop, so a run that drifts past
+                # midnight would age every position an extra day and could close
+                # one on a time stop it has not actually reached.
                 bars[s] = {"high": float(df["high"].iloc[-1]),
                            "low": float(df["low"].iloc[-1]),
                            "close": float(df["close"].iloc[-1]),
-                           "date": date.today().isoformat()}
+                           "date": scanner.session_date(df)}
             except Exception:
                 continue
         events = pb.mark_to_market(con, bars)
@@ -315,8 +437,16 @@ def job_mark() -> None:
 # Saturday 09:00 IST — weekly report
 # ---------------------------------------------------------------------------
 def job_report() -> None:
+    # Keyed by ISO week, so a spare Saturday slot cannot send the same report
+    # twice — and a week whose slot GitHub dropped entirely is still picked up
+    # by the next one.
+    week = datetime.now(ZoneInfo(TZ)).strftime("%G-W%V")
+    if already_ran("report", week):
+        print(f"[report] {week} already sent")
+        return
     analyst.purge_cache()
     notify(pb.weekly_report(DB_PATH) + "\n\n" + daily_summary())
+    record_run("report", week)
 
 
 def build() -> BlockingScheduler:
@@ -331,9 +461,12 @@ def build() -> BlockingScheduler:
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1:
+    if "--force" in sys.argv:
+        os.environ["FORCE_RUN"] = "1"
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if argv:
         {"scan": job_scan, "fill": job_fill,
-         "mark": job_mark, "report": job_report}[sys.argv[1]]()
+         "mark": job_mark, "report": job_report}[argv[0]]()
     else:
         print(f"scheduler up ({TZ}); universe = {len(get_universe())} symbols")
         build().start()

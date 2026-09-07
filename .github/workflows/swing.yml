@@ -10,20 +10,34 @@ name: Swing Paper Agent
 
 on:
   schedule:
-    # 03:46 UTC = 09:16 IST — fill yesterday's queue at today's open.
-    # Delay-tolerant: job_fill reads the session's OPEN price, which is fixed
-    # once the market opens, so a late runner still books the same fill.
+    # GitHub's `schedule` event is best-effort. Measured on this repo: on time
+    # (+38 min) through 26 Aug, then +11h55m, +6h20m, and a steady +4h30m
+    # through early September. Slots can also be dropped outright with no
+    # record. So every job gets spare slots, and every job is a no-op when the
+    # session it is about has already been done — see job_runs in jobs.py.
+    #
+    # FILL — 09:16 / 11:00 / 13:00 IST. job_fill refuses to fill unless the
+    # newest bar is today's, and leaves the queue intact when it refuses, so a
+    # late first slot is caught by a later one rather than booking a stale open.
     - cron: "46 3 * * 1-5"
+    - cron: "30 5 * * 1-5"
+    - cron: "30 7 * * 1-5"
 
-    # 10:10 UTC = 15:40 IST — mark open positions, then run the screen.
-    # ONE run, not the 15-minute polling the local scheduler does. With daily
-    # bars, polling mid-session just re-reads the same forming bar; after the
-    # close the bar is complete, which is exactly what mark_to_market needs.
-    # 27 runs/day collapse to 1 with no loss of fidelity.
+    # MARK + SCAN — 15:40 / 17:40 / 19:40 IST, all after the 15:30 close.
+    # ONE run each, not the 15-minute polling the local scheduler does: with
+    # daily bars, polling mid-session re-reads the same forming bar, and after
+    # the close the bar is complete, which is what mark_to_market needs.
+    # The screen is keyed to the session date read off the tape, so a slot that
+    # lands at 02:40 the next morning still screens the right day — and the
+    # second and third slots exit immediately once the first has done the work.
     - cron: "10 10 * * 1-5"
+    - cron: "10 12 * * 1-5"
+    - cron: "10 14 * * 1-5"
 
-    # 03:30 UTC Sat = 09:00 IST Sat — weekly report + cache purge.
+    # REPORT — 09:00 / 13:00 IST Saturday. Keyed by ISO week, so the spare
+    # cannot send the same report twice.
     - cron: "30 3 * * 6"
+    - cron: "30 7 * * 6"
 
   workflow_dispatch:
     inputs:
@@ -33,6 +47,11 @@ on:
         default: "scan"
         type: choice
         options: [scan, fill, mark, report, mark+scan]
+      force:
+        description: "Re-run even if this session is already done"
+        required: false
+        default: false
+        type: boolean
 
 # Runs write swing.db and push it. Queue them rather than letting two runs race
 # the same file; do not cancel a run mid-push.
@@ -78,10 +97,10 @@ jobs:
         id: pick
         run: |
           case "${{ github.event.schedule }}" in
-            "46 3 * * 1-5")  CMDS="fill" ;;
-            "10 10 * * 1-5") CMDS="mark scan" ;;
-            "30 3 * * 6")    CMDS="report" ;;
-            *)               CMDS="${{ inputs.command }}" ;;
+            "46 3 * * 1-5"|"30 5 * * 1-5"|"30 7 * * 1-5")   CMDS="fill" ;;
+            "10 10 * * 1-5"|"10 12 * * 1-5"|"10 14 * * 1-5") CMDS="mark scan" ;;
+            "30 3 * * 6"|"30 7 * * 6")                       CMDS="report" ;;
+            *)                                               CMDS="${{ inputs.command }}" ;;
           esac
           # the dispatch choice "mark+scan" is two commands
           CMDS="${CMDS/mark+scan/mark scan}"
@@ -90,10 +109,12 @@ jobs:
 
       - name: Run
         working-directory: langchain project
+        env:
+          FORCE: ${{ inputs.force && '--force' || '' }}
         run: |
           for c in ${{ steps.pick.outputs.cmds }}; do
             echo "::group::jobs.py $c"
-            python jobs.py "$c"
+            python jobs.py "$c" $FORCE
             echo "::endgroup::"
           done
 

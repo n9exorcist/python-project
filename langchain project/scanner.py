@@ -16,8 +16,9 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass, asdict
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Iterable, Protocol
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -40,6 +41,48 @@ MAX_EXT_FROM_EMA20 = 8.0      # percent; beyond this the stop is too far
 MIN_TURNOVER_CR = 2.0         # daily traded value floor, in Rs crore
 MIN_HISTORY_BARS = 220        # need a real 200 EMA, not a warm-up artefact
 CIRCUIT_BAND = 19.5           # percent move that implies a circuit lock
+
+
+# ----------------------------------------------------------------------------
+# Which session a run is about
+# ----------------------------------------------------------------------------
+# Everything here used to key off date.today(), which is only correct when the
+# process happens to wake between the close and midnight. On GitHub Actions it
+# does not: the scheduler has started this repo's crons anywhere from +38
+# minutes to +12 hours late. A 15:40 IST scan landing at 02:40 the next morning
+# would stamp tomorrow's date onto today's bar and claim to have screened a
+# session that has not happened yet.
+#
+# The tape carries the only authoritative answer, and it is holiday-aware for
+# free — which no weekday arithmetic ever is.
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
+MARKET_CLOSE = time(15, 30)
+
+
+def _bar_date(df: pd.DataFrame) -> date:
+    ts = df.index[-1]
+    return ts.date() if hasattr(ts, "date") else pd.Timestamp(ts).date()
+
+
+def session_date(df: pd.DataFrame) -> str:
+    """ISO date of the last bar in `df`."""
+    return _bar_date(df).isoformat()
+
+
+def last_complete(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop the final bar while it is still forming.
+
+    A daily bar dated today is only final after 15:30 IST. Screening a partial
+    bar is not a milder error than screening the wrong day: its volume is
+    whatever has traded so far, so vol_ratio reads low and names fail
+    volume_thin for no reason beyond the hour the runner woke up.
+    """
+    if df is None or len(df) == 0:
+        return df
+    now = datetime.now(MARKET_TZ)
+    if _bar_date(df) >= now.date() and now.time() < MARKET_CLOSE:
+        return df.iloc[:-1]
+    return df
 
 
 class PriceSource(Protocol):
@@ -182,7 +225,7 @@ def evaluate(symbol: str, df: pd.DataFrame) -> tuple[Candidate | None, str]:
     return (
         Candidate(
             symbol=symbol,
-            scan_date=date.today().isoformat(),
+            scan_date=session_date(df),
             close=round(c, 2),
             ema20=round(v20, 2),
             ema50=round(v50, 2),
@@ -202,24 +245,48 @@ def scan(
     symbols: Iterable[str],
     source: PriceSource,
     db_path: str | None = None,
+    session: str | None = None,
 ) -> list[Candidate]:
+    """Screen `symbols` and persist the result under one session date.
+
+    `session` pins the trading day. Pass it when the caller has already decided
+    which session this run is about; leave it None and the newest completed bar
+    across the universe decides. Either way the whole run lands on a single
+    date, which is what makes the DELETE-then-INSERT in _persist replace a day
+    whole rather than smear two sessions together.
+    """
     passed: list[Candidate] = []
     rejects: dict[str, int] = {}
+    seen: list[str] = []
 
     for sym in symbols:
         try:
-            df = source.daily_bars(sym, bars=260)
+            df = last_complete(source.daily_bars(sym, bars=261))
         except Exception:
             rejects["fetch_error"] = rejects.get("fetch_error", 0) + 1
             continue
+        if df is not None and len(df):
+            seen.append(session_date(df))
         cand, reason = evaluate(sym, df)
         if cand:
             passed.append(cand)
         else:
             rejects[reason] = rejects.get(reason, 0) + 1
 
-    _persist(passed, rejects, db_path or DB_PATH)
-    return passed
+    day = session or (max(seen) if seen else date.today().isoformat())
+
+    # A symbol whose newest bar predates the session is not trading today —
+    # suspended, delisted, or the feed is simply behind. Screening it anyway
+    # would file a stale row under today's date, and the UNIQUE(symbol,
+    # scan_date) key would then make that stale row indistinguishable from a
+    # live one.
+    fresh = [c for c in passed if c.scan_date == day]
+    stale = len(passed) - len(fresh)
+    if stale:
+        rejects["stale_data"] = rejects.get("stale_data", 0) + stale
+
+    _persist(fresh, rejects, db_path or DB_PATH, day)
+    return fresh
 
 
 # ----------------------------------------------------------------------------
@@ -245,11 +312,12 @@ CREATE TABLE IF NOT EXISTS scan_stats (
 """
 
 
-def _persist(cands: list[Candidate], rejects: dict[str, int], db_path: str) -> None:
+def _persist(cands: list[Candidate], rejects: dict[str, int], db_path: str,
+             session: str | None = None) -> None:
     con = sqlite3.connect(db_path)
     try:
         con.executescript(SCHEMA)
-        today = date.today().isoformat()
+        today = session or date.today().isoformat()
 
         # A re-scan supersedes the earlier one; it does not layer on top of it.
         # INSERT OR REPLACE alone only overwrites keys the new run happens to
