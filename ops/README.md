@@ -15,9 +15,18 @@ both started at **08:38 UTC / 14:08 IST** — GitHub drains the batch when it
 chooses, so moving a cron earlier just moves the input to a queue that ignores
 it. Slots can also be dropped with no record at all.
 
-`workflow_dispatch` does **not** go through that queue. Dispatched runs start
-within seconds. So the fix is to call the dispatch API from something that
-keeps time, and leave the `schedule` blocks in place as a backstop.
+`workflow_dispatch` does **not** go through that queue. Verified on this
+repository, 2026-09-08:
+
+```
+dispatch -> 204
+   #10  workflow_dispatch  in_progress  10:02:43Z   <- started the same second
+   #9   schedule           completed    09:58:26Z
+```
+
+Run #10 completed successfully. So the fix is to call the dispatch API from
+something that keeps time, and leave the `schedule` blocks in place as a
+backstop.
 
 Both jobs are idempotent — `job_runs` in `jobs.py` claims a session once its
 work is done — so a punctual trigger and a late GitHub slot firing the same day
@@ -25,86 +34,118 @@ is a no-op, not a double-send.
 
 ---
 
-## 1. Make a dedicated token
+## 1. The token
 
-Do **not** reuse the existing `GITHUB_PAT`. It has `contents: write`, and this
-token is going to live on a third-party server.
+`workflow_dispatch` needs **Actions: Read and write**.
 
-GitHub → Settings → Developer settings → Personal access tokens →
-**Fine-grained tokens** → Generate new token:
+> ### The trap that cost an hour here
+>
+> GitHub's permission list has two entries whose descriptions both mention
+> Actions:
+>
+> - **Secrets** — *"Manage Actions repository secrets."* This governs the
+>   encrypted values a workflow reads. **Not this one.**
+> - **Actions** — *"Work with GitHub Actions: workflows, workflow runs and
+>   artifacts."* **This one.**
+>
+> Granting Secrets instead yields a token that can *read* workflows and runs —
+> any token can, on a public repo — and still returns
+> `403 Resource not accessible by personal access token` on dispatch. It looks
+> exactly like a permission that failed to save, which sends you looking in the
+> wrong place.
 
-- **Name**: `swing-dispatch`
-- **Expiration**: 90 days (put a reminder in your calendar — dispatch fails
-  silently with a 401 when it lapses)
-- **Repository access**: Only select repositories → `n9exorcist/python-project`
-- **Repository permissions**: `Actions` → **Read and write**.
-  Leave everything else alone. (`Metadata: Read` is added automatically and is
-  required.)
+Settings → Developer settings → Personal access tokens → Fine-grained tokens →
+the token → **Add permissions** → **Actions** → *Read and write* → Update.
 
-Blast radius if that token leaks: someone can start workflows in this one repo.
-It cannot read or write code.
+A fine-grained token scoped to this repository alone is enough; no classic token
+is needed. Two things worth doing while you are there:
 
-## 2. Point a clock at it
+- **Remove `Secrets` if present.** The workflow reads its own secrets at
+  runtime; the token never touches them, and this credential is headed for a
+  third-party server.
+- **Set an expiration.** Dispatch fails with 401 when it lapses, and a cron
+  service will email you rather than failing silently.
 
-### cron-job.org — no code, ~5 minutes
+Verify:
 
-Create a free account, then **Create cronjob** twice.
-
-**Job A — the morning brief**
-
-| Field | Value |
-| --- | --- |
-| Title | `swing brief` |
-| URL | `https://api.github.com/repos/n9exorcist/python-project/actions/workflows/swing.yml/dispatches` |
-| Schedule | Custom: minute `16`, hour `9`, days `Mon–Fri` |
-| Timezone | `Asia/Kolkata` |
-| Method | `POST` |
-| Request body | `{"ref":"main","inputs":{"command":"brief"}}` |
-
-Headers:
-
-```
-Accept: application/vnd.github+json
-Authorization: Bearer <the swing-dispatch token>
-X-GitHub-Api-Version: 2022-11-28
-Content-Type: application/json
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+  -H "Authorization: Bearer $GITHUB_PAT" \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  https://api.github.com/repos/n9exorcist/python-project/actions/workflows/swing.yml/dispatches \
+  -d '{"ref":"main","inputs":{"command":"brief"}}'
 ```
 
-**Job B — the evening screen.** Same URL, headers and method. Schedule
-`15:40 Mon–Fri Asia/Kolkata`, body:
+`204` is success. `403` means the Actions permission is still missing.
 
-```json
-{"ref":"main","inputs":{"command":"mark+scan"}}
+## 2. The clock
+
+### cron-job.org — no code, ~5 minutes, machine-independent
+
+Free account, then **Create cronjob** for each row. All three share the same
+URL, method and headers; only the schedule and body differ.
+
+```
+URL     https://api.github.com/repos/n9exorcist/python-project/actions/workflows/swing.yml/dispatches
+Method  POST
+
+Headers
+  Authorization: Bearer <token>
+  Accept: application/vnd.github+json
+  X-GitHub-Api-Version: 2022-11-28
+  Content-Type: application/json
 ```
 
-A successful dispatch returns **HTTP 204 No Content** with an empty body. Set
-"Treat as success" to 2xx and enable failure notifications — cron-job.org will
-email you if GitHub starts rejecting the token.
+| Job | Schedule (timezone `Asia/Kolkata`) | Request body |
+| --- | --- | --- |
+| `swing brief` | 09:16, Mon–Fri | `{"ref":"main","inputs":{"command":"brief"}}` |
+| `swing scan` | 15:40, Mon–Fri | `{"ref":"main","inputs":{"command":"mark+scan"}}` |
+| `swing weekly` | 09:00, Sat | `{"ref":"main","inputs":{"command":"report"}}` |
 
-### Cloudflare Worker — if you would rather not paste the token into a form
+A successful dispatch returns **204 with an empty body**, so set "treat as
+success" to 2xx and enable failure notifications — that is what tells you the
+token has expired.
 
-`cron-worker/` in this directory is ready to deploy. The token lives in
-Cloudflare's secret store instead of a web form.
+### Cloudflare Worker — if you would rather not paste a token into a web form
+
+`cron-worker/` is ready to deploy; the token lives in Cloudflare's secret store
+instead.
 
 ```
 npm install -g wrangler
 cd ops/cron-worker
 wrangler login
-wrangler secret put GITHUB_TOKEN     # paste the swing-dispatch token
+wrangler secret put GITHUB_TOKEN
 wrangler deploy
 ```
 
-Cron triggers are declared in `wrangler.toml` in **UTC**, already set to
-03:46 and 10:10 UTC (09:16 and 15:40 IST).
+Crons in `wrangler.toml` are UTC: 03:46 and 10:10 = 09:16 and 15:40 IST.
 
-## 3. Check it worked
+## 3. Windows Task Scheduler — the local fallback
 
-The morning after, either:
+`install-tasks.ps1` registers the same triggers on this machine, and
+`punctual.ps1` tries the dispatch first, running the job locally only if that
+fails. So once the token works these stop being a second *worker* and become a
+second *dispatcher*:
 
-- the Telegram brief arrives at ~09:16 instead of ~14:00, or
-- Actions shows a run with event `workflow_dispatch` rather than `schedule`.
+```
+15:33:08  === mark ===
+15:33:09  using GITHUB_PAT
+15:33:12  dispatched 'mark' to GitHub (runs in the cloud, starts within seconds)
+```
 
-If nothing fires, the usual causes are a lapsed token (401), the token missing
-`Actions: write` (403 `Resource not accessible by personal access token`), or
-`command` not matching one of the `workflow_dispatch` options in `swing.yml`
-(422).
+Useful while the cloud cron is being set up, redundant afterwards, and dependent
+on this machine being awake either way.
+
+```
+powershell -ExecutionPolicy Bypass -File ops\install-tasks.ps1            # install
+powershell -ExecutionPolicy Bypass -File ops\install-tasks.ps1 -Uninstall # remove
+```
+
+## Why running two schedulers is safe
+
+`job_runs` claims a session once its work is actually done, so whichever trigger
+fires second prints `already screened; nothing to do` and exits. That is what
+makes the GitHub `schedule` blocks safe to keep as a backstop, and why a
+cron-job.org run colliding with a delayed GitHub run costs nothing.
