@@ -253,9 +253,52 @@ started at 08:38 UTC. GitHub drains the batch when it chooses, so moving a cron
 earlier only moves the input to a queue that ignores it. Slots can also be
 dropped with no record at all.
 
-`workflow_dispatch` does **not** go through that queue — dispatched runs start
-within seconds. `ops/README.md` sets up a punctual external trigger; the
-`schedule` blocks stay as a backstop.
+`workflow_dispatch` does **not** go through that queue. Verified on this
+repository:
+
+```
+dispatch -> 204
+   #10  workflow_dispatch  in_progress  10:02:43Z   <- started the same second
+   #9   schedule           completed    09:58:26Z
+```
+
+End to end, from a clock rather than by hand — a trigger at 15:40:11 IST,
+dispatched immediately, the runner finished 64 seconds later having sent the
+message. Telegram had it by 15:41, against the ~20:00 the schedule queue would
+have managed.
+
+Three things stood in the way, none of them the code:
+
+- **The permission is not the one it looks like.** Dispatch needs
+  `Actions: Read and write`, and GitHub's fine-grained list has two entries
+  whose descriptions both mention Actions — `Secrets` ("manage Actions
+  repository secrets") and `Actions` ("workflows, workflow runs and
+  artifacts"). Granting `Secrets` yields a token that reads workflows perfectly
+  well, because any token can on a public repo, and still returns
+  `403 Resource not accessible by personal access token`. It looks exactly like
+  an update that failed to save.
+- **The scheduler may strip `Authorization`.** cron-job.org has its own HTTP
+  auth fields and drops the header on save. GitHub accepts a token as HTTP
+  Basic auth with an empty username, which routes through those fields instead.
+  `Accept` turns out not to be required at all, which matters because a stray
+  space in its name was enough for cron-job.org to refuse the whole job as
+  "non-wellformed".
+- **A dispatch carries one value.** `workflow_dispatch` takes a single choice,
+  so a Saturday cron could ask for `report` or `eval` but not both — quietly
+  dropping the agent loop. The options now include `eval+report`, and the split
+  is generalised from one hardcoded pair to replacing every `+`.
+
+Three clocks now, and `job_runs` makes the redundancy free:
+
+| Trigger | Fires | Depends on |
+| --- | --- | --- |
+| cron-job.org | to the second | nothing — the cloud clock |
+| Windows Task Scheduler | to the minute | this machine being awake |
+| GitHub `schedule` | +4 to +12 hours | GitHub's queue |
+
+`ops/punctual.ps1` asks GitHub to run the job and only runs it locally if the
+dispatch is refused, so the local trigger became a second *dispatcher* rather
+than a second *worker* the moment the token worked.
 
 ### Which makes idempotence mandatory
 
@@ -453,6 +496,68 @@ Guards, each learned from a specific failure:
   decides after the request is already formed. A call that is not made cannot
   fail, and the writer composes from the tool results already in state.
 
+### One question, fourteen checkpoints
+
+The graph state for a single web question, read back from the running server:
+
+| step | what ran | msgs |
+| --- | --- | --- |
+| 0–1 | input guard; `delegations` and `tool_rounds` zeroed | 1 |
+| 2 | supervisor → `web` | 1 |
+| 3–4 | specialist calls the tool; tools node returns result #1 | 3 |
+| 5–6 | second round, still inside `MAX_TOOL_ROUNDS` | 5 |
+| 7 | budget spent — handoff, no further model call | 6 |
+| 8 | supervisor → `FINISH` | 6 |
+| 9 | writer drafts, output scanned for secrets | 7 |
+| 10–12 | reflect → pass | 7 |
+
+The counters are per request, not per session, so a fresh question always starts
+with its full allowance rather than inheriting the last one's.
+
+### The reviewer was judging blind
+
+`reflect_node` received only the question and the answer — never what the tools
+returned. So it could not tell "nothing was found" from "something was found and
+thrown away", which is the only distinction that matters. When an answer looked
+thin, *say you do not have access* is a plausible-sounding fix that happens to be
+false.
+
+It was wrong twice in one session. The web specialist made two successful
+searches and reflection then instructed the writer to claim it could not search
+— which it did, answering from 2024 training data with the results sitting
+unused in state. RAGAS had already scored that exact shape: **faithfulness 0.00
+on a case whose context recall was 1.00**, meaning retrieval worked and the
+answer ignored it.
+
+The reviewer now receives the tool output, and is told that denying capability
+while the context holds the answer is the worst failure available to it:
+
+```
+judging blind      PASS
+with the context   REVISE: the answer does not use the retrieved context,
+                   which already provides the current market reaction
+```
+
+On the same question, before and after:
+
+| | LLM calls | tokens | time | verdict |
+| --- | --- | --- | --- | --- |
+| before | 7 | 21,843 | 141.8s | revise → answered from 2024 |
+| after | 6 | 7,660 | 28.1s | pass → answered from the search |
+
+65% fewer tokens and five times faster, because the old path spent 14,000 extra
+tokens rewriting a good answer into a worse one.
+
+### Each specialist is told which tools it holds
+
+A comparison question needed records *and* the web. The model called
+`mcp_search_the_web` from the researcher and the whole request died at the
+provider — *"attempted to call tool which was not in request.tools"*. The prompt
+never said which tools it had. Each specialist now names its own, is told that
+any other belongs to a different specialist and calling it fails the request,
+and is asked to answer the part it can reach while saying what is still missing.
+Routing across sources is the supervisor's job.
+
 ## Model configuration — `models.py`
 
 Groq retired `llama-3.3-70b-versatile` without notice and the chat app handed
@@ -571,6 +676,13 @@ With no argument, `jobs.py` starts a blocking scheduler.
 
 ## Things that will bite
 
+- **Replacing a SQLite file means deleting its `-wal` too.** `memory.db` failed
+  `integrity_check` with btree damage confined to LangGraph's `checkpoints` and
+  `writes`. The repair rebuilt it cleanly — and it still reported corruption,
+  because the 16 MB write-ahead log from the old database was left beside the new
+  64 KB one and SQLite dutifully replayed it. The tell was `integrity_check`
+  naming pages 3000–5650 in a file that holds sixteen. A backup must include the
+  `-wal`; a replacement must delete it. `ops/repair_memory_db.py` does both.
 - **`.github/` is only read at the repository ROOT.** A nested
   `langchain project/.github/` was silently ignored, which is why the options
   workflow failed for three weeks while looking correctly configured.
@@ -603,7 +715,8 @@ all candidates, with everything upstream of it deterministic.
 
 Working and autonomous: sector selection, the screen, the 5/13 trigger gate,
 the NSE event veto, the daily analyst call, all three paper books, the Telegram
-brief, the dashboard, cross-provider model failover, and the weekly agent loop.
+brief, the dashboard, cross-provider model failover, punctual cloud dispatch,
+and the weekly agent loop.
 
 Verified running unattended: on 2026-09-07 the agent screened the 07-Sep session
 at 15:46 IST, passed **JKPAPER**, took it, and queued it for the next open —
@@ -611,7 +724,10 @@ with no human in the loop.
 
 Open:
 
-- **Punctual delivery** needs the external trigger in `ops/README.md`. It
+- **Punctual delivery is solved.** Three cron-job.org jobs dispatch from the
+  cloud — brief 09:16, mark+scan 15:40, eval+report Saturday — with the local
+  task and the GitHub schedule behind them. The one maintenance date is the
+  token's expiry on 8 October. It
   requires a fine-grained PAT with `Actions: write`, scoped to this repository
   alone — not the existing token, which has `contents: write`.
 - **The agent loop is waiting on evidence, not on code.** It runs every

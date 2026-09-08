@@ -140,6 +140,16 @@ def main() -> int:
     # writes. So the check that matters is simply attempting it.
     try:
         DB.unlink()
+        # The -wal and -shm belong to the file just deleted, NOT to the rebuild.
+        # Leaving them means SQLite opens the clean database, finds a
+        # write-ahead log beside it, and replays 16 MB of a different and
+        # corrupt database over the top -- which is how a successful repair
+        # still reports "database disk image is malformed" the moment anything
+        # opens it. They are already inside the backup taken above.
+        for suffix in ("-wal", "-shm"):
+            side = DB.with_name(DB.name + suffix)
+            if side.exists():
+                side.unlink()
         new.rename(DB)
     except PermissionError:
         print()
