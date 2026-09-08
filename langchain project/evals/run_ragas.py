@@ -99,14 +99,26 @@ EMBED_MODEL = os.getenv("RAGAS_EMBED_MODEL", "models/gemini-embedding-001")
 # until they time out -- the first run lost 9 of 12 jobs to TimeoutError while
 # the API itself was healthy. Fewer workers with a longer patience finishes
 # sooner in wall-clock terms than a wide fan-out that mostly fails.
-MAX_WORKERS = int(os.getenv("RAGAS_WORKERS", "3"))
+# SERIAL, deliberately. The 429s name the per-day quota id, but they carry a
+# retryDelay of 3-42 SECONDS, not hours -- so the limiter that actually bites is
+# short-window, and patience clears it while concurrency cannot. Three workers
+# means three simultaneous requests each tripping the throttle and then retrying
+# into one another; at one worker the calls are naturally spaced by their own
+# ~20s duration and simply queue. A serial run that finishes beats a parallel
+# one that loses two thirds of its jobs.
+MAX_WORKERS = int(os.getenv("RAGAS_WORKERS", "1"))
 JOB_TIMEOUT = int(os.getenv("RAGAS_TIMEOUT", "600"))
 
 # BUDGET -- which decides how you can run this at all.
 #
-# Gemini's free tier allows 20 generate_content requests PER DAY PER MODEL
-# (quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier). It is not a
-# per-minute limit, so no amount of backing off recovers it. RAGAS spends
+# The 429 names quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier with
+# limit 20, which reads like a hard daily ceiling. Observed behaviour says
+# otherwise: the same errors carry retryDelay values of 3-42 seconds. Whatever
+# the quota is called, it refills on a short window, so the way through it is to
+# go slowly rather than to give up for the day -- which is why MAX_WORKERS
+# defaults to 1 above.
+#
+# Budget still governs how much you should attempt in one sitting. RAGAS spends
 # roughly one judge call per metric per case:
 #
 #     4 metrics x 20 cases  = ~80 calls   -- four days of free quota
@@ -217,12 +229,42 @@ def main() -> int:
                     help="include cases that were never meant to retrieve")
     ap.add_argument("--metrics", choices=sorted(METRIC_SETS), default="all",
                     help="'core' halves the judge calls; see BUDGET in this file")
+    ap.add_argument("--rescore", metavar="RESULT.json",
+                    help="score a previous run's saved answers instead of asking "
+                         "the graph again; add --only-missing to fill gaps")
+    ap.add_argument("--only-missing", action="store_true",
+                    help="with --rescore, skip cases that already have a score")
     args = ap.parse_args()
 
     key = os.getenv("SWING_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not key:
         print("ERROR: no Gemini key; RAGAS needs a judge and an embedding model.")
         return 1
+
+    # Collection and scoring are separable on purpose. Running the graph costs
+    # ~90s a case; scoring costs quota. When the judge 429s halfway through,
+    # re-running the graph to retry the scoring wastes the half that worked and
+    # re-answers questions that were already answered. --rescore reads the saved
+    # answers back and only spends judge calls.
+    if args.rescore:
+        saved = json.loads(Path(args.rescore).read_text(encoding="utf-8"))
+        rows = []
+        for r in saved:
+            scored = r.get("faithfulness") is not None or r.get("context_recall") is not None
+            if args.only_missing and scored:
+                continue
+            rows.append({
+                "user_input": r.get("user_input", ""),
+                "response": r.get("response", ""),
+                "retrieved_contexts": r.get("retrieved_contexts") or ["(nothing retrieved)"],
+                "reference": r.get("reference", ""),
+                "_id": r.get("case", "?"),
+            })
+        if not rows:
+            print("Nothing to re-score — every case in that file already has a score.")
+            return 0
+        print(f"Re-scoring {len(rows)} saved cases; the graph is not called.")
+        return score(rows, args)
 
     cases = json.loads((HERE / "dataset.json").read_text(encoding="utf-8"))
     if not args.all_categories:
@@ -236,9 +278,13 @@ def main() -> int:
     print(f"Running {len(cases)} cases through {API} ...")
     rows = asyncio.run(collect(cases))
     if not rows:
-        print("Nothing collected — is uvicorn running on 8001?")
+        print(f"Nothing collected — is uvicorn serving {API}?")
         return 1
+    return score(rows, args)
 
+
+def score(rows: list[dict], args) -> int:
+    key = os.getenv("SWING_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
     from langchain_google_genai import (ChatGoogleGenerativeAI,
                                         GoogleGenerativeAIEmbeddings)
 
@@ -262,8 +308,11 @@ def main() -> int:
     print(f"\n{len(rows)} cases x {len(chosen)} metrics = ~{calls} judge calls"
           f" with {JUDGE_MODEL}")
     if calls > 20:
-        print("  NOTE: Gemini free tier allows 20 per day per model. Use"
-              " --metrics core, or --limit, or a paid key.")
+        print("  NOTE: the free tier throttles hard above ~20 calls in a window."
+              " Use --metrics core, --limit, or a paid key.")
+    if MAX_WORKERS > 1:
+        print(f"  NOTE: {MAX_WORKERS} workers. Concurrency is what loses jobs to"
+              " 429 here; 1 is the reliable setting.")
     result = evaluate(
         dataset=dataset,
         metrics=chosen,
