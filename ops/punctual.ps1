@@ -51,13 +51,27 @@ Write-Log "=== $Job ==="
 # --- read .env without a shell dependency ---------------------------------
 # The token is never hardcoded here: this file is committed, .env is not.
 # .env sits at the repo root, beside the "langchain project" directory.
+#
+# GITHUB_DISPATCH_PAT is preferred over GITHUB_PAT and is meant to be a separate,
+# minimal token: this repository only, Actions read+write, nothing else. It is
+# the one that ends up pasted into a third-party cron service, and a token living
+# on someone else's server should not also be able to read and rewrite the code.
+# GITHUB_PAT remains the fallback so nothing breaks before the split token exists.
 $envFile = Join-Path $repo '.env'
 $token = $null
+$tokenKey = $null
 if (Test-Path $envFile) {
-    foreach ($line in Get-Content $envFile) {
-        if ($line -match '^\s*GITHUB_PAT\s*=\s*(.+?)\s*$') { $token = $Matches[1].Trim('"').Trim("'") }
+    foreach ($key in @('GITHUB_DISPATCH_PAT', 'GITHUB_PAT')) {
+        if ($token) { continue }
+        foreach ($line in Get-Content $envFile) {
+            if ($line -match ('^\s*' + $key + '\s*=\s*(.+?)\s*$')) {
+                $token = $Matches[1].Trim('"').Trim("'")
+                $tokenKey = $key
+            }
+        }
     }
 }
+if ($token) { Write-Log "using $tokenKey" }
 
 # --- tier 1: ask GitHub to run it -----------------------------------------
 $dispatched = $false
