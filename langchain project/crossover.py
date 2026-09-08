@@ -135,6 +135,45 @@ def latest(symbol: str, df: pd.DataFrame, side: str = "buy",
     return None
 
 
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS triggers (
+    scan_date   TEXT NOT NULL,     -- the session the screen ran for
+    symbol      TEXT NOT NULL,
+    side        TEXT NOT NULL,
+    trigger_date TEXT NOT NULL,    -- the bar the cross actually fired on
+    bars_ago    INTEGER NOT NULL,
+    entry       REAL, stop REAL,
+    tp1 REAL, tp2 REAL, tp3 REAL,
+    risk REAL, atr REAL,
+    PRIMARY KEY (scan_date, symbol)
+);
+"""
+
+
+def save(con, scan_date: str, crosses: list[Cross]) -> None:
+    """Record the trigger behind each candidate, keyed to the scan that used it.
+
+    trigger_date and scan_date are stored separately on purpose. They are equal
+    on a clean setup and diverge when a name qualifies days after its cross --
+    which is exactly the distinction that decides whether the levels are still
+    usable, so collapsing them into one column would erase the thing worth
+    knowing.
+    """
+    con.executescript(SCHEMA)
+    con.execute("DELETE FROM triggers WHERE scan_date=?", (scan_date,))
+    for c in crosses:
+        con.execute(
+            "INSERT OR REPLACE INTO triggers (scan_date, symbol, side, trigger_date, "
+            "bars_ago, entry, stop, tp1, tp2, tp3, risk, atr) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (scan_date, c.symbol, c.side, c.date, c.bars_ago, c.entry, c.stop,
+             c.tp1, c.tp2, c.tp3, c.risk, c.atr),
+        )
+
+
 if __name__ == "__main__":
     import sys
     from scanner import YFinanceSource, last_complete

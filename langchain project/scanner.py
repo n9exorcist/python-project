@@ -46,6 +46,22 @@ SCREEN_VERSION = _rules.BASE_VERSION   # superseded per run by rules.version()
 MIN_HISTORY_BARS = 220        # need a real 200 EMA, not a warm-up artefact
 CIRCUIT_BAND = 19.5           # percent move that implies a circuit lock
 
+# THE TRIGGER GATE
+#
+# The filters above describe a STATE -- a name can sit in them for weeks. The
+# 5/13 EMA crossover is an EVENT, and the whole method hangs off it: entry, stop
+# and all three targets are computed from the close of the crossover bar. Use
+# those levels days later and every one of them is fiction. JK Paper crossed on
+# 21 Aug at 391.80 with TP1 at 410.85, and by the time it cleared the screen on
+# 7 Sep it traded at 420.05 -- entering there means buying past the first
+# target, on a stop the price left behind long ago.
+#
+# So a candidate needs a trigger that is still live. TRIGGER_MAX_BARS is the
+# whole of the judgement: 0 means the cross must be on the session just
+# screened, and each extra bar admits a setup that has already run without you.
+REQUIRE_TRIGGER = os.getenv("REQUIRE_TRIGGER", "1") != "0"
+TRIGGER_MAX_BARS = int(os.getenv("TRIGGER_MAX_BARS", "3"))
+
 
 # ----------------------------------------------------------------------------
 # Which session a run is about
@@ -285,6 +301,7 @@ def scan(
     passed: list[Candidate] = []
     rejects: dict[str, int] = {}
     detail: list[tuple] = []          # (symbol, reason, snapshot) per rejection
+    triggers: list = []               # the live cross behind each survivor
     seen: list[str] = []
 
     active = _rules.effective(db_path or DB_PATH)
@@ -300,6 +317,24 @@ def scan(
         if df is not None and len(df):
             seen.append(session_date(df))
         cand, reason, snap = evaluate(sym, df, active)
+
+        # The trigger gate runs last, and only on names that already passed. It
+        # is recorded as an ordinary rejection so the funnel keeps adding up:
+        # "12 screened, 2 passed the state filters, 1 had no live trigger" is
+        # readable, whereas silently dropping the name makes the screen look
+        # stricter than it is.
+        if cand and REQUIRE_TRIGGER:
+            import crossover
+            trig = crossover.latest(sym, df, "buy", within_bars=TRIGGER_MAX_BARS)
+            if trig is None:
+                stale = crossover.signals(sym, df, sides=("buy",), limit=1)
+                if stale:
+                    snap = dict(snap or {})
+                    snap["trigger_bars_ago"] = stale[0].bars_ago
+                cand, reason = None, "no_live_trigger"
+            else:
+                triggers.append(trig)
+
         if cand:
             cand.screen_version = ver
             passed.append(cand)
@@ -320,6 +355,16 @@ def scan(
         rejects["stale_data"] = rejects.get("stale_data", 0) + stale
 
     _persist(fresh, rejects, db_path or DB_PATH, day, detail, ver)
+
+    if triggers:
+        import crossover
+        kept = {c.symbol for c in fresh}
+        con = sqlite3.connect(db_path or DB_PATH)
+        try:
+            crossover.save(con, day, [t for t in triggers if t.symbol in kept])
+            con.commit()
+        finally:
+            con.close()
     return fresh
 
 

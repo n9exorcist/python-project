@@ -318,6 +318,23 @@ def job_scan() -> None:
         lines.append(sec)
     lines.append("")
 
+    # The trigger levels are the trade. Reporting a candidate without them
+    # leaves you to work out where the stop goes, which is the one thing the
+    # method already decided.
+    trig_by: dict[str, tuple] = {}
+    try:
+        con0 = sqlite3.connect(DB_PATH)
+        try:
+            import crossover
+            con0.executescript(crossover.SCHEMA)
+            trig_by = {r[0]: r[1:] for r in con0.execute(
+                "SELECT symbol, trigger_date, bars_ago, entry, stop, tp1, tp2, tp3 "
+                "FROM triggers WHERE scan_date=?", (today,))}
+        finally:
+            con0.close()
+    except Exception as e:
+        print(f"[scan] trigger levels unavailable ({str(e)[:60]})")
+
     verdict_by = {v.symbol: v for v in verdicts}
     for c in cands:
         v = verdict_by.get(c.symbol)
@@ -330,6 +347,12 @@ def job_scan() -> None:
             f"       {c.close} · RSI {c.rsi14} · vol x{c.vol_ratio} · "
             f"{c.ext_pct:+.1f}% vs 20EMA · ATR {c.atr_pct}%"
         )
+        t = trig_by.get(c.symbol)
+        if t:
+            tdate, ago, entry, stop, tp1, tp2, tp3 = t
+            fresh = "today" if not ago else f"{ago} bar{'s' if ago > 1 else ''} ago"
+            lines.append(f"       trigger {tdate} ({fresh})  entry {entry}")
+            lines.append(f"       SL {stop} · TP1 {tp1} · TP2 {tp2} · TP3 {tp3}")
         if v:
             lines.append(f"       {v.thesis}")
             for r in v.risks:
