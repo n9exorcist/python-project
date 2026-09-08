@@ -141,7 +141,16 @@ METRIC_SETS = {
 # Only the retrieval cases. Asking context_recall of a question that was never
 # meant to hit the knowledge base measures nothing and scores zero, which would
 # drag the aggregate down for a system behaving correctly.
-RETRIEVAL_CATEGORIES = {"retrieval", "comparison"}
+# "comparison" was aspirational and matches nothing in dataset.json. The two
+# categories that DO belong here are retrieval, and faithfulness_trap -- a trap
+# case is precisely a test of whether the model invents claims the context does
+# not support, which is what the faithfulness metric measures.
+#
+# The rest (routing_*, safety, general_no_tool) are deliberately excluded:
+# context recall on a safety refusal is not a low score, it is a meaningless
+# one, and averaging it in would drag the number down for a system behaving
+# exactly as designed. --all-categories includes them anyway if you want to see.
+RETRIEVAL_CATEGORIES = {"retrieval", "faithfulness_trap"}
 
 
 async def ask(client: httpx.AsyncClient, question: str, thread_id: str) -> str:

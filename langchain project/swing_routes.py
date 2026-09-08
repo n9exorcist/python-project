@@ -260,9 +260,39 @@ def _sectors(con: sqlite3.Connection, top: int = 5) -> dict[str, Any]:
     sessions = con.execute(
         "SELECT COUNT(DISTINCT day) FROM sector_board").fetchone()[0]
 
-    board = [dict(r) for r in con.execute(
-        "SELECT sector, slug, chg_pct, advance, decline, sector_pe, np_yoy_pct, "
-        "stock_cnt FROM sector_board WHERE day=? ORDER BY chg_pct DESC", (day,))]
+    # Rank the way the SCANNER ranks, not by today's move.
+    #
+    # This used to be `ORDER BY chg_pct DESC` and then board[0], which is the
+    # best single day. universe.resolve_detailed() picks the sector with
+    # sectors.ranked(), the mean over every session on record. The two agree
+    # only when the day's leader also leads the trend -- and when they diverged
+    # the page announced "screening Aviation" while the agent was screening
+    # Paper, showing Aviation's breadth, PE and earnings under a list of paper
+    # stocks. The dashboard's whole job in this card is to report step 1 of the
+    # method, and it was reporting a different decision from the one taken.
+    #
+    # ranked() reads sector_board out of SQLite, so this stays a read-only view.
+    board: list[dict[str, Any]] = []
+    try:
+        import sectors as _sectors_mod
+        for r in _sectors_mod.ranked():
+            board.append({
+                "sector": r["sector"], "slug": r["slug"],
+                # chg_pct is what the chart plots; it is now the ranking metric,
+                # which is what the card's "ranked over N sessions" already
+                # claimed it was.
+                "chg_pct": round(r["mean_chg"], 2),
+                "today_chg": r.get("today_chg"),
+                "advance": r.get("advance"), "decline": r.get("decline"),
+                "sector_pe": r.get("sector_pe"), "np_yoy_pct": r.get("np_yoy_pct"),
+                "stock_cnt": r.get("stock_cnt"),
+            })
+    except Exception:
+        # Falling back to the raw day keeps the card alive if the ranking cannot
+        # be computed; it is the old behaviour, so label nothing differently.
+        board = [dict(r) for r in con.execute(
+            "SELECT sector, slug, chg_pct, advance, decline, sector_pe, np_yoy_pct, "
+            "stock_cnt FROM sector_board WHERE day=? ORDER BY chg_pct DESC", (day,))]
 
     chosen = board[0] if board else None
     stocks: list[dict[str, Any]] = []
