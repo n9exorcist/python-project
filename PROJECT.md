@@ -30,6 +30,7 @@ rules.py         the screen's thresholds, and the constitution governing changes
 sectors.py       Moneycontrol sector board -> rank sectors over N sessions
 universe.py      the best sector's constituents -> the day's universe
 scanner.py       deterministic technical screen -> candidates (no LLM)
+crossover.py     the 5/13 EMA trigger: is the entry live, and at what levels
 events.py        NSE corporate calendar -> event veto
 analyst.py       ONE LLM call over all candidates -> take / watch / skip
 paper_broker.py  fills at the NEXT session's open, two rule sets in parallel
@@ -89,6 +90,50 @@ because the universe failed to load. **The size is the tell.**
 That is what the agent loop learns from, and the two are written together so
 they can never disagree about a day.
 
+
+### 3b. The trigger — `crossover.py`
+
+The screen describes a **state**: a name can sit in it for weeks. The 5/13 EMA
+crossover is an **event**, dated to one bar, and the whole method hangs off it —
+entry, stop and all three targets are computed from the crossover bar's close.
+
+Ported from the TradingView Pine indicator, and faithful to it: `ta.crossover`
+semantics (the previous bar must not already be on the new side, so a series
+that stays above never re-fires), Wilder ATR, stop at 1.5 × ATR, targets at
+1R/2R/3R.
+
+A candidate must have a **live** trigger — `TRIGGER_MAX_BARS`, default 3 — or
+it is rejected as `no_live_trigger` and appears in the funnel like any other
+rejection. Why it matters:
+
+```
+JKPAPER  cross 2026-08-21  entry 391.80  TP1 410.85
+         cleared the screen 2026-09-07 at 420.05
+```
+
+Entering there is buying *past the first target*, on a stop the price left
+behind two weeks earlier. A candidate whose trigger has expired is not a trade.
+
+### The price feed must be RAW
+
+`yfinance` defaults to `auto_adjust=True`, which back-adjusts every bar before
+an ex-dividend date. JK Paper paid ₹4.00 on 2026-08-19 and the adjustment moved
+the cross a day earlier:
+
+```
+adjusted     20 Aug   ema5 383.488   ema13 382.749   <- cross
+unadjusted   20 Aug   ema5 385.264   ema13 385.693      still below
+             21 Aug   ema5 387.443   ema13 386.565   <- cross
+```
+
+The chart's own readout says 387.44 / 386.57 — the unadjusted pair. TradingView
+plots raw; the scanner did not, and so disagreed with the chart it was meant to
+reproduce.
+
+This reaches past the trigger. Adjustment shifts EMA stacking, RSI and ATR, so a
+dividend can move a name in or out of the screen entirely — and a stop at
+1.5 × ATR off an adjusted close is not a price the market will ever print.
+
 ### 4. The event veto — `events.py`
 
 Board meetings and corporate actions from NSE's public JSON API, cached 12
@@ -119,10 +164,42 @@ Two details that cost real debugging:
 Every signal opens a position in **two** books: same entry, same timing, same
 Rs 1,00,000 notional.
 
-| | FIXED | STRUCTURAL |
-| --- | --- | --- |
-| Stop | -7.5% | entry - 2.5 x ATR(14) |
-| Target | +17.5% | 2.5 x risk (2.5R) |
+| | FIXED | STRUCTURAL | TRIGGER |
+| --- | --- | --- | --- |
+| Stop | −7.5% | entry − 2.5 × ATR(14) | the indicator's stop, 1.5 × ATR |
+| Target | +17.5% | 2.5 × risk (2.5R) | TP1/TP2/TP3 at 1R/2R/3R |
+| Shape | one position | one position | three tranches, scaled out |
+
+FIXED and STRUCTURAL are **rules** applied to whatever price a fill happens at.
+TRIGGER is different: it trades the levels the indicator actually drew. Each
+tranche is its own row, with the tranche number in the book name — the table
+carries `UNIQUE(book, symbol, signal_date)`, and changing a UNIQUE in SQLite
+means rebuilding it, which is not something to do to a live paper book for
+cosmetics. `mark_to_market` then needs no changes: the tranches share a stop,
+each has its own target, each closes on its own terms. The notional is split
+three ways so the book risks the same capital per signal as the other two.
+
+The drawn levels are kept rather than recomputed from the fill. They were set
+off the crossover close and the fill lands at the next open — but they are the
+orders that would actually have been resting in the market. R is measured from
+the real fill, so TITAGARH's gap from 871.85 to 878.75 reports as
++0.70/+1.55/+2.41R instead of a tidy 1/2/3R. The cost of the gap is visible
+rather than hidden by re-anchoring the stop.
+
+**Scaling against a fixed stop has unkind arithmetic.** Bank a third at +0.7R,
+then lose a full −1R on each of the other two, and taking TP1 has made the trade
+worse than never scaling:
+
+```
+breakeven OFF   TP1 +0.70R, stop -1.00R, stop -1.00R   net -1.297R
+breakeven ON    TP1 +0.70R, stop  0.00R, stop  0.00R   net +0.703R
+```
+
+`TRIGGER_BREAKEVEN_AFTER_TP1` is OFF by default, because the Pine never touches
+its stop and this book exists to trade what the indicator draws. Turning it on
+is a change to the strategy, not a correction of it. The stop moves *after* the
+marking loop, so it applies from the next bar: within one daily bar there is no
+knowing whether TP1 printed before or after the low.
 
 Why two. A flat 7.5% stop is inside one day's range for many Indian smallcaps.
 When a stop sits inside the noise you get stopped out of trades that later work,
@@ -485,6 +562,10 @@ With no argument, `jobs.py` starts a blocking scheduler.
 | `TELEGRAM_BOT_TOKEN`, `SWING_TELEGRAM_CHAT_ID` | swing notifications, kept separate from the options job's approval prompts |
 | `AGENT_DB` | path to `swing.db` |
 | `UNIVERSE` | `sector` (default), `sector:N`, or an index name |
+| `REQUIRE_TRIGGER` | `0` disables the 5/13 gate entirely |
+| `TRIGGER_MAX_BARS` | how stale a cross may be, default 3 |
+| `TRIGGER_BREAKEVEN_AFTER_TP1` | `1` moves the stop up once TP1 fills |
+| `RAGAS_JUDGE_MODEL` | quota is per model; rotate when one is spent |
 | `GROQ_MODEL`, `GEMINI_CHAT_MODEL` | model ids |
 | `MAX_CONTEXT_TOKENS`, `MAX_TOOL_CHARS` | chat request caps |
 
@@ -520,9 +601,9 @@ all candidates, with everything upstream of it deterministic.
 
 # Status
 
-Working and autonomous: sector selection, the screen, the NSE event veto, the
-daily analyst call, both paper books, the Telegram brief, the dashboard, and the
-weekly agent loop.
+Working and autonomous: sector selection, the screen, the 5/13 trigger gate,
+the NSE event veto, the daily analyst call, all three paper books, the Telegram
+brief, the dashboard, cross-provider model failover, and the weekly agent loop.
 
 Verified running unattended: on 2026-09-07 the agent screened the 07-Sep session
 at 15:46 IST, passed **JKPAPER**, took it, and queued it for the next open —
@@ -539,6 +620,14 @@ Open:
   filter (has 0). The first forward returns land ten sessions after the first
   scan under `scan_rejects`, so the earliest a finding can clear is late
   September.
+- **JKPAPER is an accidental experiment.** It was filled on 2026-09-08 at 420.05
+  under the pre-gate rules, with a trigger 11 sessions stale and price already
+  past TP1. It is deliberately NOT being closed: it was a legitimate trade under
+  the rules in force when it was taken, and deleting positions because the rules
+  changed afterwards is exactly the retroactive edit that makes a paper log
+  worthless. `screen_version` exists so outcomes attribute to the rules that
+  produced them. It now sits alongside TITAGARH, which was taken on a same-day
+  trigger — a live measurement of what a stale trigger is actually worth.
 - **Expectancy needs roughly 30 closed trades** before it means anything. There
   are currently 2 open and 0 closed. This gates the exit rules only; the screen
   is judged on forward returns instead.
