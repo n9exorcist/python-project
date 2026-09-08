@@ -23,6 +23,7 @@ MockBroker rather than replacing it.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import date
@@ -61,6 +62,20 @@ MAX_OPEN_PER_BOOK = 8          # concentration cap
 # One trade's notional split across the three targets, so the TRIGGER book
 # risks the same capital per signal as the other two rather than three times it.
 TRIGGER_TRANCHES = 3
+
+# Move the remaining tranches' stop to breakeven once TP1 fills.
+#
+# OFF by default, because the Pine never touches tradeSl and this book exists to
+# trade what the indicator actually draws. It is offered because the arithmetic
+# of scaling with a fixed stop is unkind: bank a third at +0.7R, then lose a
+# full -1R on each of the other two, and TP1 has made the trade WORSE than not
+# scaling at all (-1.30R against -1.00R). Breakeven turns that same path into
+# roughly +0.23R.
+#
+# It is a change to the strategy, not a correction to it, so it is a switch
+# rather than a default -- and once the agent loop has closed trades on both
+# settings it can say which one actually pays instead of either of us guessing.
+TRIGGER_BREAKEVEN_AFTER_TP1 = os.getenv("TRIGGER_BREAKEVEN_AFTER_TP1", "0") == "1"
 TIME_STOP_DAYS = 30            # a swing that hasn't worked in 30 sessions is dead money
 NOTIONAL_PER_TRADE = 100_000.0  # fixed notional keeps R comparable across books
 
@@ -193,6 +208,7 @@ def mark_to_market(con: sqlite3.Connection, bars: dict[str, dict]) -> list[str]:
     """
     con.executescript(SCHEMA)
     events: list[str] = []
+    tp1_filled: list[tuple[str, float]] = []
     rows = con.execute(
         "SELECT id,book,symbol,entry,stop,target,qty,entry_date "
         "FROM paper_positions WHERE status='open'"
@@ -231,6 +247,25 @@ def mark_to_market(con: sqlite3.Connection, bars: dict[str, dict]) -> list[str]:
             (bar["date"], px, reason, round(r, 3), round((px - entry) * qty, 2), pid),
         )
         events.append(f"{book}: {sym} closed {reason} @ {px} ({r:+.2f}R)")
+        if book == "TRIGGER1" and reason == "target":
+            tp1_filled.append((sym, entry))
+
+    # Applied AFTER the loop, so it takes effect from the next bar rather than
+    # this one. Within a single daily bar there is no way to know whether TP1
+    # printed before or after the low, and quietly raising a stop mid-bar to
+    # rescue a tranche the same bar would have stopped is precisely how a paper
+    # log flatters itself.
+    if TRIGGER_BREAKEVEN_AFTER_TP1:
+        for sym, entry in tp1_filled:
+            moved = con.execute(
+                "UPDATE paper_positions SET stop=? "
+                "WHERE status='open' AND symbol=? AND book IN ('TRIGGER2','TRIGGER3') "
+                "AND stop < ?", (entry, sym, entry),
+            ).rowcount
+            if moved:
+                events.append(
+                    f"TRIGGER: {sym} stop moved to breakeven {entry} on "
+                    f"{moved} remaining tranche{'s' if moved > 1 else ''}")
     con.commit()
     return events
 
