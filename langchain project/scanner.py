@@ -424,7 +424,28 @@ class YFinanceSource:
         import yfinance as yf
 
         period_days = int(bars * 1.6) + 40  # allow for holidays and weekends
-        df = yf.Ticker(symbol + self.suffix).history(period=f"{period_days}d")
+        # RAW prices, not dividend-adjusted.
+        #
+        # yfinance defaults to auto_adjust=True, which back-adjusts every bar
+        # before an ex-dividend date. That is right for measuring total return
+        # and wrong for everything this system does with a price:
+        #
+        #   * The levels have to be tradeable. A stop at 1.5 x ATR off an
+        #     adjusted close is not a price the market will ever print.
+        #   * It silently moves signals. JK Paper paid Rs 4.00 on 2026-08-19;
+        #     on adjusted prices the 5/13 EMA cross lands on the 20th, on raw
+        #     prices the 21st -- and the 21st is what the chart shows, because
+        #     TradingView plots raw. A screen whose dates disagree with the
+        #     chart is a screen nobody can check.
+        #   * It reaches further than the trigger: EMA stacking, RSI and ATR
+        #     all shift, so a dividend can move a name in or out of the screen
+        #     entirely.
+        #
+        # Forward-return evaluation in eval.py is the one place adjustment is
+        # the correct choice, and it measures percentage change between two
+        # closes on the same basis, so raw is consistent there too.
+        df = yf.Ticker(symbol + self.suffix).history(
+            period=f"{period_days}d", auto_adjust=False)
         if df.empty:
             raise ValueError(f"no data for {symbol}")
         df = df.rename(
