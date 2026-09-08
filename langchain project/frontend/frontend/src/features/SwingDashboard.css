@@ -976,3 +976,12 @@
 }
 .sw-step.dead { opacity: 0.45; text-decoration: line-through; }
 .sw-arrow { font-style: normal; opacity: 0.5; margin: 0 2px; }
+
+
+.sw-note.refresh-note {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--sw-accent, #0b6b5e);
+  background: var(--sw-accent-soft, #eef6f4);
+  font-size: 12px;
+}

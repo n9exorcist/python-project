@@ -419,6 +419,8 @@ export default function SwingDashboard() {
   const [marks, setMarks] = useState(null);
   const [marksLoading, setMarksLoading] = useState(false);
   const [marksError, setMarksError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState(null);
   const [tip, setTip] = useState(null);
   const [wl, setWl] = useState({ rows: [], counts: {} });
   const [tab, setTab] = useState("watchlist");
@@ -597,11 +599,46 @@ export default function SwingDashboard() {
           ) : (
             <span className="sw-pill">no scan yet</span>
           )}
-          <button className="sw-btn" onClick={() => load(true)}>
-            Refresh
+          <button
+            className="sw-btn"
+            disabled={refreshing}
+            onClick={async () => {
+              // Two different kinds of stale. Re-reading SQLite cannot make the
+              // sector board current, because nothing has fetched today's yet --
+              // so the button pulls the board first, then re-reads.
+              setRefreshing(true);
+              setRefreshNote(null);
+              try {
+                const r = await fetch(`${API_BASE}/swing/sectors/refresh`, {
+                  method: "POST",
+                });
+                if (r.ok) {
+                  const d = await r.json();
+                  setRefreshNote(
+                    `Sector board updated to ${d.day} — ${d.sectors} sectors, ` +
+                      `${d.chosen} leading with ${d.constituents} constituents.`
+                  );
+                }
+              } catch (e) {
+                setRefreshNote(`Board refresh failed: ${String(e).slice(0, 80)}`);
+              }
+              await load(true);
+              setRefreshing(false);
+            }}
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
       </header>
+
+      {refreshNote ? (
+        <p className="sw-note refresh-note">
+          {refreshNote}{" "}
+          {scan.stale
+            ? ""
+            : "The screen still reads the last completed session — there is no finished bar for today until the 15:30 close."}
+        </p>
+      ) : null}
 
       {/* ---------------- Step 1: the sector ---------------- */}
       {sectors && sectors.day ? (

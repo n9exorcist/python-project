@@ -535,6 +535,45 @@ def watchlist_delete(item_id: int) -> dict[str, Any]:
         con.close()
 
 
+@router.post("/sectors/refresh")
+def refresh_sector_board() -> dict[str, Any]:
+    """Pull today's sector board from Moneycontrol on demand.
+
+    The rest of this module reads SQLite and never the network, which is what
+    lets the page poll for free. The board is the one panel that legitimately
+    goes stale between scheduled runs: it is live market data, written only by
+    job_scan, so before the 15:40 screen the page shows yesterday's ranking with
+    no way to ask for today's.
+
+    An explicit button is the right shape for that -- the same call the scan
+    makes, paid for only when someone asks. It does NOT move the scan date: the
+    screen needs a COMPLETED daily bar, and before 15:30 there is not one.
+    """
+    import sectors
+
+    board = sectors.fetch_board()
+    sectors.save_board(board)
+
+    ranked = sectors.ranked()
+    chosen = ranked[0] if ranked else None
+    constituents = 0
+    if chosen:
+        try:
+            # The constituent chart reads sector_stocks, which save_board does
+            # not touch. Without this the ranking updates and the names under it
+            # stay yesterday's -- a page that disagrees with itself.
+            constituents = len(sectors.sector_stocks(chosen["slug"]))
+        except Exception:
+            pass
+
+    return {
+        "day": date.today().isoformat(),
+        "sectors": len(board) if board else 0,
+        "chosen": chosen["sector"] if chosen else None,
+        "constituents": constituents,
+    }
+
+
 @router.get("/dashboard")
 def dashboard(day: str | None = None) -> dict[str, Any]:
     """Everything the page needs, in one round trip, straight from SQLite."""
