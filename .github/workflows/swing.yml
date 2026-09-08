@@ -51,7 +51,7 @@ on:
         required: true
         default: "scan"
         type: choice
-        options: [brief, scan, fill, mark, report, eval, mark+scan]
+        options: [brief, scan, fill, mark, report, eval, mark+scan, eval+report]
       force:
         description: "Re-run even if this session is already done"
         required: false
@@ -107,8 +107,11 @@ jobs:
             "30 3 * * 6"|"30 7 * * 6")                       CMDS="eval report" ;;
             *)                                               CMDS="${{ inputs.command }}" ;;
           esac
-          # the dispatch choice "mark+scan" is two commands
-          CMDS="${CMDS/mark+scan/mark scan}"
+          # A dispatch choice joins two jobs with "+", because workflow_dispatch
+          # takes one value from a list and an external cron sends one request.
+          # Replacing every "+" handles mark+scan and eval+report alike, instead
+          # of needing a new line here each time a pair is added.
+          CMDS="${CMDS//+/ }"
           echo "cmds=$CMDS" >> "$GITHUB_OUTPUT"
           echo "Running: $CMDS"
 
