@@ -28,7 +28,25 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-Book = Literal["FIXED", "STRUCTURAL"]
+Book = str
+
+# The two original books are RULES applied to any fill. The third is different:
+# it trades the levels the 5/13 indicator actually drew, scaled out across its
+# three targets.
+#
+# Each tranche is a separate row, and the tranche number lives in the book name
+# rather than a new column. paper_positions carries UNIQUE(book, symbol,
+# signal_date), so three rows for one signal need three book values -- and
+# changing a UNIQUE constraint in SQLite means rebuilding the table, which is
+# not a thing to do to a live paper book for cosmetics. mark_to_market then
+# needs no changes at all: each tranche has its own target, they share a stop,
+# and each closes on its own terms.
+TRANCHES = ("TRIGGER1", "TRIGGER2", "TRIGGER3")
+BASE_BOOKS = ("FIXED", "STRUCTURAL")
+
+
+def is_trigger(book: str) -> bool:
+    return book.startswith("TRIGGER")
 
 # --- FIXED book -------------------------------------------------------------
 FIXED_STOP_PCT = 7.5
@@ -40,6 +58,9 @@ STRUCTURAL_RR = 2.5
 
 # --- shared -----------------------------------------------------------------
 MAX_OPEN_PER_BOOK = 8          # concentration cap
+# One trade's notional split across the three targets, so the TRIGGER book
+# risks the same capital per signal as the other two rather than three times it.
+TRIGGER_TRANCHES = 3
 TIME_STOP_DAYS = 30            # a swing that hasn't worked in 30 sessions is dead money
 NOTIONAL_PER_TRADE = 100_000.0  # fixed notional keeps R comparable across books
 
@@ -106,6 +127,7 @@ def enter(
     fill_price: float,
     atr: float,
     entry_date: str | None = None,
+    trigger: dict | None = None,
 ) -> list[str]:
     """Open the same signal in both books. Fill at next session's open —
     never at the signal bar's close. Filling at the close of the bar that
@@ -116,15 +138,34 @@ def enter(
     entry_date = entry_date or date.today().isoformat()
     notes: list[str] = []
 
-    for book in ("FIXED", "STRUCTURAL"):
+    books = list(BASE_BOOKS) + (list(TRANCHES) if trigger else [])
+    for book in books:
         if open_positions(con, book) >= MAX_OPEN_PER_BOOK:
             notes.append(f"{book}: skipped {symbol}, book full")
             continue
-        lv = levels_for(book, fill_price, atr)
+        if is_trigger(book):
+            # The indicator's own prices, not a recomputation from the fill.
+            #
+            # The levels were drawn off the crossover bar's close; the fill
+            # happens at the next session's open, which is a different number.
+            # Keeping the drawn levels is the honest choice: they are the orders
+            # you would actually have resting in the market, and they are what
+            # the chart shows. The R multiple is then computed from the real
+            # fill, so a gap-up simply shows as a worse reward-to-risk rather
+            # than being quietly hidden by re-anchoring the stop.
+            n = int(book[-1])
+            lv = Levels(entry=fill_price, stop=float(trigger["stop"]),
+                        target=float(trigger[f"tp{n}"]))
+        else:
+            lv = levels_for(book, fill_price, atr)
+
         if lv.risk <= 0:
             notes.append(f"{book}: skipped {symbol}, non-positive risk")
             continue
-        qty = max(1, int(NOTIONAL_PER_TRADE // fill_price))
+
+        notional = (NOTIONAL_PER_TRADE / TRIGGER_TRANCHES
+                    if is_trigger(book) else NOTIONAL_PER_TRADE)
+        qty = max(1, int(notional // fill_price))
         try:
             con.execute(
                 "INSERT INTO paper_positions "
@@ -226,18 +267,57 @@ def weekly_stats(con: sqlite3.Connection, book: Book) -> dict:
     }
 
 
+def trigger_stats(con: sqlite3.Connection) -> dict:
+    """The three tranches aggregated back into one book.
+
+    Reporting them separately would say the TRIGGER book took three positions
+    per signal, which is exactly the wrong impression: it took one, sized the
+    same as the others, and exited it in thirds.
+    """
+    rows = con.execute(
+        "SELECT book, r_multiple, pnl FROM paper_positions "
+        "WHERE status='closed' AND book LIKE 'TRIGGER%'"
+    ).fetchall()
+    if not rows:
+        return {"closed": 0}
+    per: dict[int, float] = {}
+    for book, r, _ in rows:
+        i = int(str(book)[-1])
+        per[i] = round(per.get(i, 0.0) + float(r or 0), 3)
+    total = round(sum(float(r or 0) for _, r, _ in rows), 3)
+    return {
+        "closed": len(rows),
+        "total_R": total,
+        "expectancy_R": round(total / len(rows), 3),
+        "pnl": round(sum(float(p or 0) for _, _, p in rows), 2),
+        "per_tranche": per,
+    }
+
+
 def weekly_report(db_path: str = "memory.db") -> str:
     """Plain text, sized for a Telegram message."""
     con = sqlite3.connect(db_path)
     try:
         a, b = weekly_stats(con, "FIXED"), weekly_stats(con, "STRUCTURAL")
+        # The three tranches are one book for reporting; separate rows exist
+        # only because they close at different targets.
+        trig = trigger_stats(con)
     finally:
         con.close()
 
-    if not a.get("closed") and not b.get("closed"):
+    if not a.get("closed") and not b.get("closed") and not trig.get("closed"):
         return "Weekly report: no closed paper trades yet."
 
     lines = [f"WEEKLY PAPER REPORT — {date.today().isoformat()}", ""]
+    if trig.get("closed"):
+        lines += [
+            f"TRIGGER (5/13 levels, scaled across TP1/2/3)",
+            f"  closed {trig['closed']}   total {trig['total_R']:+}R"
+            f"   expectancy {trig['expectancy_R']:+}R/tranche",
+            f"  by target: " + ", ".join(
+                f"TP{i} {trig['per_tranche'].get(i, 0):+}R" for i in (1, 2, 3)),
+            "",
+        ]
     for s in (a, b):
         if not s.get("closed"):
             lines += [f"{s['book']}: no closed trades", ""]

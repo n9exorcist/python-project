@@ -431,6 +431,22 @@ def job_fill(announce: bool = True) -> list[str]:
             notify(msg) if announce else print(msg)
             return []
 
+        # The levels the indicator drew, keyed to the scan that queued the name.
+        # Absent for anything queued before the trigger gate existed, in which
+        # case the entry books to the two rule sets only -- an old queue entry
+        # is not a reason to invent levels for it.
+        trig: dict[str, dict] = {}
+        try:
+            import crossover
+            con.executescript(crossover.SCHEMA)
+            for r in con.execute(
+                "SELECT symbol, scan_date, stop, tp1, tp2, tp3 FROM triggers"
+            ):
+                trig[f"{r[0]}|{r[1]}"] = {"stop": r[2], "tp1": r[3],
+                                          "tp2": r[4], "tp3": r[5]}
+        except Exception as e:
+            print(f"[fill] trigger levels unavailable ({str(e)[:60]})")
+
         msgs: list[str] = []
         for sym, sig_date, atr in rows:
             try:
@@ -440,7 +456,8 @@ def job_fill(announce: bool = True) -> list[str]:
                 msgs.append(f"{sym}: no open price ({e})")
                 continue
             msgs += pb.enter(con, sym, sig_date, open_px, atr or open_px * 0.03,
-                             entry_date=bar_day)
+                             entry_date=bar_day,
+                             trigger=trig.get(f"{sym}|{sig_date}"))
         con.execute("DELETE FROM entry_queue")
         con.commit()
         if msgs and announce:

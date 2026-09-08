@@ -14,6 +14,11 @@ const POLL_MS = 60000;
 // hidden here, not switched off. Render both again by making this a list.
 const SHOWN_BOOK = "FIXED";
 
+// The TRIGGER book trades the 5/13 indicator's own levels, scaled across its
+// three targets, so it is three rows for one signal. It is shown alongside
+// FIXED because it is the book that follows the method you actually trade.
+const isShownBook = (b) => b === SHOWN_BOOK || String(b).startsWith("TRIGGER");
+
 // A sector runs to 25-40 constituents, and a wall of tickers buries the panel's
 // point. Show the leaders and the laggards — that is the shape of the day — but
 // never drop a name that cleared the screen. The screened names are the entire
@@ -548,8 +553,8 @@ export default function SwingDashboard() {
   }
 
   const { scan, funnel, books, tokens, sectors, rules } = data;
-  const positions = (data.positions || []).filter((p) => p.book === SHOWN_BOOK);
-  const closed = (data.closed || []).filter((c) => c.book === SHOWN_BOOK);
+  const positions = (data.positions || []).filter((p) => isShownBook(p.book));
+  const closed = (data.closed || []).filter((c) => isShownBook(c.book));
   const markBySym = new Map((marks || []).map((m) => [`${m.book}:${m.id}`, m]));
 
   // One ruler across both sector panels.
