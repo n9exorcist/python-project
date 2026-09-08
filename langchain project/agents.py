@@ -256,7 +256,7 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
         return nxt if nxt in WORKERS else "writer"
 
     # ------------------------- SPECIALISTS -------------------------
-    def make_specialist(name, llm_spec, focus):
+    def make_specialist(name, llm_spec, focus, tool_names=()):
         async def specialist(state: GraphState):
             msgs = state.get("messages", [])
             tool_rounds = state.get("tool_rounds", 0)
@@ -293,8 +293,25 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
             active_llm = llm_spec
             extra = " Use your tool(s) when a lookup is needed; otherwise answer directly."
 
+            # Name the tools this specialist actually holds.
+            #
+            # Without this the model reaches for a sibling's tool and the whole
+            # request dies at the provider, not in our code:
+            #
+            #   Tool call validation failed: attempted to call tool
+            #   'mcp_search_the_web' which was not in request.tools
+            #
+            # A question needing two sources is the supervisor's job to route,
+            # one specialist at a time -- so the instruction is to report what
+            # this one can find and say what is still missing, rather than to
+            # improvise across a boundary the API enforces.
+            have = ", ".join(tool_names) if tool_names else "none"
             sys = (
                 f"You are the {name} specialist on a market-analysis team. {focus}{extra} "
+                f"The ONLY tools available to you are: {have}. Any other tool belongs "
+                "to a different specialist and calling it fails the whole request. "
+                "If the question also needs something you cannot reach, answer the part "
+                "you can and state plainly what is still needed. "
                 "Format dates for tools as DD-MM-YYYY. The current year is 2026."
             )
             resp = await active_llm.ainvoke([SystemMessage(content=sys)] + _fit(msgs))
@@ -303,13 +320,16 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
 
     researcher_node = make_specialist(
         "researcher", llm_researcher,
-        "You look up internal corporate records, company financials, and knowledge-base notes.")
+        "You look up internal corporate records, company financials, and knowledge-base notes.",
+        tool_names=[t.name for t in researcher_tools])
     web_node = make_specialist(
         "web", llm_web,
-        "You search the live web for current news and market reaction.")
+        "You search the live web for current news and market reaction.",
+        tool_names=[t.name for t in web_tools])
     trading_node = make_specialist(
         "trading", llm_trading,
-        "You read today's trading signal and verify executed trades in the local database.")
+        "You read today's trading signal and verify executed trades in the local database.",
+        tool_names=[t.name for t in trading_tools])
 
     def route_specialist(state: GraphState) -> Literal["tools", "supervisor"]:
         return "tools" if tools_condition(state) == "tools" else "supervisor"
@@ -361,14 +381,59 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
 
         question = _latest_question(state.get("messages", []))
         answer = state.get("final_answer", "")
+
+        # What the tools ACTUALLY returned this turn.
+        #
+        # The reviewer used to see only the question and the answer, and judged
+        # in a vacuum. When an answer looked thin, "say you do not have access"
+        # is a plausible-sounding fix -- and it was wrong twice in one session:
+        # the web specialist made two successful Tavily calls and reflection
+        # then instructed the writer to claim it could not search, which it
+        # duly did, answering from 2024 training data instead. RAGAS scored the
+        # same failure as faithfulness 0.00 on a case where context recall was
+        # 1.00: retrieval worked, the answer ignored it.
+        #
+        # A reviewer that cannot see the evidence cannot tell "nothing was
+        # found" from "something was found and dropped", which is the only
+        # distinction that matters here.
+        retrieved: list[str] = []
+        for m in state.get("messages", []):
+            if getattr(m, "type", "") != "tool":
+                continue
+            c = m.content if isinstance(m.content, str) else str(m.content)
+            if c:
+                retrieved.append(c)
+        evidence = "\n---\n".join(retrieved)[:MAX_TOOL_CHARS]
+
         sys = (
-            "You are a strict reviewer. Given the user's QUESTION and the assistant's ANSWER, "
-            "decide if the answer directly and accurately addresses the question. Correctly "
-            "stating that information is unavailable counts as PASS. "
-            "Reply 'PASS' if the answer is good, or 'REVISE: <one specific fix>' if it is vague, "
-            "off-topic, or makes claims not supported by the conversation."
+            "You are a strict reviewer. Given the user's QUESTION, the RETRIEVED "
+            "CONTEXT the tools returned, and the assistant's ANSWER, decide if the "
+            "answer directly and accurately addresses the question.\n"
+            "Reply 'PASS' if the answer is good, or 'REVISE: <one specific fix>' if "
+            "it is vague, off-topic, or makes claims the context does not support."
         )
+        if evidence:
+            sys += (
+                "\n\nRETRIEVED CONTEXT IS NOT EMPTY. The tools ran and returned the "
+                "material below, so the assistant HAD it.\n"
+                "- If the answer says the information is unavailable, that it cannot "
+                "search, or that it lacks access, while the context contains the "
+                "answer, REVISE and instruct it to answer FROM the retrieved context. "
+                "That is the worst failure available here and it must not pass.\n"
+                "- Never instruct the assistant to claim it lacks access to something "
+                "the context shows it retrieved.\n"
+                "- Never instruct it to fall back on its own training data; the "
+                "context outranks what the model believes."
+            )
+        else:
+            sys += (
+                "\n\nNo tool returned anything this turn, so correctly stating that "
+                "the information is unavailable counts as PASS."
+            )
+
         user = f"QUESTION: {question}\n\nANSWER: {answer}"
+        if evidence:
+            user += f"\n\nRETRIEVED CONTEXT:\n{evidence}"
         resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=user)])
         raw = (resp.content if isinstance(resp.content, str) else str(resp.content)).strip()
 
