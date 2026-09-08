@@ -1171,8 +1171,77 @@ export default function SwingDashboard() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Which MODEL answered. The node table above is the role that was
+                  asked for; these two disagree exactly when a fallback fired,
+                  which is the moment worth seeing. */}
+              {(tokens.models || []).length > 0 ? (
+                <div className="sw-models">
+                  <div className="sw-sub-head">Models that answered</div>
+                  {tokens.models.map((m, i) => (
+                    <div className="sw-model-row" key={i}>
+                      <span className={`sw-prov ${m.provider}`}>{m.provider}</span>
+                      <span className="sw-model-id">{m.model}</span>
+                      <span className="sw-muted">as {m.served_by}</span>
+                      <span className="sw-model-num">
+                        {m.calls} req · {fmtInt(m.tokens)} tok
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {(tokens.failovers || []).length > 0 ? (
+                <div className="sw-failovers">
+                  <div className="sw-sub-head">Failovers today</div>
+                  {tokens.failovers.map((f, i) => (
+                    <div className="sw-failover" key={i}>
+                      <b>{f.node}</b> → <b>{f.served_by}</b>
+                      <span className="sw-muted">
+                        {" "}
+                        {f.reason} · {String(f.at).slice(11, 16)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           )}
+
+          {/* Shown whether or not anything ran: a fallback chain nobody can see
+              is one nobody trusts until the day it is needed. */}
+          {(tokens.chain || []).length > 0 ? (
+            <div className="sw-chain">
+              <div className="sw-sub-head">Routing — first affordable wins</div>
+              {tokens.chain.map((c) => (
+                <div className="sw-chain-row" key={c.node}>
+                  <span className="sw-chain-node">{c.node}</span>
+                  <span className="sw-chain-steps">
+                    {c.steps.map((st, i) => (
+                      <span key={st.node + i}>
+                        {i > 0 ? <i className="sw-arrow">→</i> : null}
+                        <span
+                          className={`sw-step ${st.live ? "" : "dead"}`}
+                          title={
+                            st.live
+                              ? `${st.node} · ${st.model}`
+                              : `${st.node} · ${st.model} — no API key, skipped`
+                          }
+                        >
+                          {String(st.model).split("/").pop()}
+                        </span>
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              ))}
+              <p className="sw-note">
+                A call takes the first step whose provider still has budget, so
+                an exhausted provider is stepped over rather than raised on.
+                Greyed steps have no API key and are skipped entirely.
+              </p>
+            </div>
+          ) : null}
         </Card>
       </div>
 

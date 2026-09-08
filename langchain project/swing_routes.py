@@ -337,7 +337,50 @@ def _tokens(con: sqlite3.Connection, day: str, pinned: bool = False) -> dict[str
             "token_pct": round(tok / tb * 100, 1) if tb else 0.0,
             "request_pct": round(req / rb * 100, 1) if rb else 0.0,
         })
-    return {"day": day, "rows": rows, "providers": providers, "fallback": fallback}
+    # Which MODEL actually answered, and whether a fallback was involved.
+    # token_ledger aggregates by node, which is the role that was asked for --
+    # it cannot distinguish "the analyst ran on Gemini" from "the analyst ran on
+    # Groq because Gemini was spent". llm_events records the deployment that
+    # actually served, so those two stop looking identical on the page.
+    models: list[dict[str, Any]] = []
+    failovers: list[dict[str, Any]] = []
+    if _table_exists(con, "llm_events"):
+        models = [dict(r) for r in con.execute(
+            "SELECT provider, model, served_by, COUNT(*) AS calls, "
+            "       SUM(tokens_in + tokens_out) AS tokens, "
+            "       SUM(fell_back) AS fallbacks "
+            "FROM llm_events WHERE day=? AND model IS NOT NULL AND model != '' "
+            "GROUP BY provider, model, served_by ORDER BY tokens DESC", (day,))]
+        failovers = [dict(r) for r in con.execute(
+            "SELECT at, node, served_by, provider, model, reason "
+            "FROM llm_events WHERE day=? AND fell_back=1 ORDER BY at DESC LIMIT 8",
+            (day,))]
+
+    # The declared routing, so the page can show what WOULD happen next rather
+    # than only what already has. A chain nobody can see is a chain nobody
+    # trusts until the day it is needed.
+    chain: list[dict[str, Any]] = []
+    try:
+        from llm_router import _CHAIN, MODEL_LIST, PROVIDER_OF, _available
+        live = {d["model_name"] for d in _available()}
+        by_name = {m["model_name"]: m["litellm_params"]["model"] for m in MODEL_LIST}
+        for node in ("analyst", "reporter", "fast"):
+            if node not in by_name:
+                continue
+            steps = []
+            for c in [node] + _CHAIN.get(node, []):
+                steps.append({
+                    "node": c,
+                    "model": by_name.get(c, "?"),
+                    "provider": PROVIDER_OF.get(c, "?"),
+                    "live": c in live,
+                })
+            chain.append({"node": node, "steps": steps})
+    except Exception:
+        pass
+
+    return {"day": day, "rows": rows, "providers": providers, "fallback": fallback,
+            "models": models, "failovers": failovers, "chain": chain}
 
 
 # ---------------------------------------------------------------------------

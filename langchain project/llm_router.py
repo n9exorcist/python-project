@@ -31,7 +31,8 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import litellm
@@ -213,6 +214,25 @@ def router() -> Router:
 # Ledger
 # ---------------------------------------------------------------------------
 LEDGER_SCHEMA = """
+-- One row per call. token_ledger below stays an aggregate by node, which is
+-- what the budget guard reads; this is the per-call detail, and it is the only
+-- place that records the model that ACTUALLY served. The two differ precisely
+-- when a fallback fires, which is the moment you most want to see.
+CREATE TABLE IF NOT EXISTS llm_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    day        TEXT NOT NULL,
+    at         TEXT NOT NULL,
+    node       TEXT NOT NULL,      -- the role that was asked for
+    served_by  TEXT NOT NULL,      -- the deployment that answered
+    provider   TEXT NOT NULL,
+    model      TEXT,               -- the provider's own model id
+    tokens_in  INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
+    fell_back  INTEGER NOT NULL DEFAULT 0,
+    reason     TEXT                -- why, when it did
+);
+CREATE INDEX IF NOT EXISTS ix_events_day ON llm_events(day);
+
 CREATE TABLE IF NOT EXISTS token_ledger (
     day        TEXT NOT NULL,
     provider   TEXT NOT NULL,
@@ -235,6 +255,10 @@ class Usage:
     node: str
     tokens_in: int
     tokens_out: int
+    served_by: str = ""      # the deployment that answered; node when no fallback
+    model: str = ""          # the provider's own id, read off the response
+    fell_back: int = 0
+    reason: str = ""
 
 
 def _con() -> sqlite3.Connection:
@@ -270,6 +294,13 @@ def record(u: Usage, day: str | None = None) -> None:
             "tokens_out = tokens_out + excluded.tokens_out",
             (day, u.provider, u.node, u.tokens_in, u.tokens_out),
         )
+        con.execute(
+            "INSERT INTO llm_events (day, at, node, served_by, provider, model, "
+            "tokens_in, tokens_out, fell_back, reason) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (day, datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds"),
+             u.node, u.served_by or u.node, u.provider, u.model,
+             u.tokens_in, u.tokens_out, u.fell_back, u.reason),
+        )
         con.commit()
     finally:
         con.close()
@@ -295,6 +326,41 @@ def headroom(provider: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 # The single call site
 # ---------------------------------------------------------------------------
+# The declared chains, flattened once: {"analyst": ["reporter", "fast"], ...}
+_CHAIN: dict[str, list[str]] = {k: v for d in FALLBACKS for k, v in d.items()}
+
+
+def _affordable(node: str, need: int) -> tuple[str | None, str]:
+    """The first deployment in this node's chain whose provider can still pay.
+
+    THE BUG THIS FIXES. There are two independent failover mechanisms here, and
+    the budget guard used to defeat the other one:
+
+      * LiteLLM's own fallbacks handle a call that FAILS -- a 429, a 500, a
+        timeout. Those fire inside router().completion().
+      * This budget guard handles a provider that is SPENT, and it runs BEFORE
+        the router is ever entered.
+
+    The guard used to raise BudgetExceeded as soon as the intended provider was
+    out of budget. Because it ran first, LiteLLM never got the chance to route
+    to the chain -- so "analyst" would die with Gemini exhausted while "fast"
+    sat idle on a completely separate Groq budget. The chain was declared,
+    tested, and unreachable in the one situation it was written for.
+
+    Now the chain is consulted for affordability too. A node is only refused
+    when every deployment behind it is also spent, which is the honest answer.
+    """
+    live = {d["model_name"] for d in _available()}
+    for candidate in [node] + _CHAIN.get(node, []):
+        if candidate not in live:
+            continue                      # no key for it; already dropped
+        provider = PROVIDER_OF.get(candidate, "unknown")
+        h = headroom(provider)
+        if h["requests_left"] >= 1 and need <= h["tokens_left"]:
+            return candidate, provider
+    return None, ""
+
+
 def complete(
     node: str,
     messages: list[dict],
@@ -302,27 +368,35 @@ def complete(
     json_mode: bool = True,
     **kwargs: Any,
 ):
-    provider = PROVIDER_OF.get(node, "unknown")
     est_in = estimate_tokens(node, messages)
     need = est_in + max_tokens
-    h = headroom(provider)
 
-    if h["requests_left"] < 1:
-        raise BudgetExceeded(
-            f"{node}: {provider} request budget spent ({h['request_budget']}/day)"
+    served, provider = _affordable(node, need)
+    if served is None:
+        spent = ", ".join(
+            f"{PROVIDER_OF.get(c, '?')} {headroom(PROVIDER_OF.get(c, '?'))['tokens_left']:,} left"
+            for c in [node] + _CHAIN.get(node, [])
         )
-    if need > h["tokens_left"]:
         raise BudgetExceeded(
-            f"{node}: needs ~{need:,} tokens on {provider}, "
-            f"{h['tokens_left']:,} of {h['token_budget']:,} left today"
+            f"{node}: needs ~{need:,} tokens and every fallback is spent ({spent})"
         )
+
+    fell_back = served != node
+    reason = f"{PROVIDER_OF.get(node, '?')} budget spent" if fell_back else ""
+    if fell_back:
+        print(f"[router] {node} -> {served} ({reason})")
 
     if json_mode:
         kwargs.setdefault("response_format", {"type": "json_object"})
 
     resp = router().completion(
-        model=node, messages=messages, max_tokens=max_tokens, **kwargs
+        model=served, messages=messages, max_tokens=max_tokens, **kwargs
     )
+
+    # The model the provider says answered. When LiteLLM's own fallbacks fire
+    # inside completion(), this is the only signal that they did -- the
+    # deployment we asked for and the model that replied stop agreeing.
+    actual = str(getattr(resp, "model", "") or "")
 
     usage = getattr(resp, "usage", None)
     record(Usage(
@@ -330,6 +404,10 @@ def complete(
         node=node,
         tokens_in=int(getattr(usage, "prompt_tokens", est_in) or est_in),
         tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
+        served_by=served,
+        model=actual,
+        fell_back=int(fell_back),
+        reason=reason,
     ))
     return resp
 

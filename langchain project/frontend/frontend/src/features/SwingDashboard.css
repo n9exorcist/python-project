@@ -918,3 +918,61 @@
     gap: 4px;
   }
 }
+
+
+/* --- which model answered, and what would answer next -------------------- */
+.sw-sub-head {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sw-muted, #6b7280);
+  margin: 14px 0 6px;
+}
+.sw-models, .sw-failovers, .sw-chain { margin-top: 2px; }
+.sw-model-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--sw-line, #eceef0);
+  font-size: 12px;
+}
+.sw-model-row:last-child { border-bottom: 0; }
+.sw-model-id { font-family: ui-monospace, Consolas, monospace; }
+.sw-model-num { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sw-prov {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #eef2f7;
+  color: #41506b;
+}
+.sw-prov.groq { background: #fdf0e6; color: #8a4b12; }
+.sw-prov.gemini { background: #e8f1fd; color: #1a4f8a; }
+
+.sw-failover { font-size: 12px; padding: 3px 0; }
+
+.sw-chain-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+.sw-chain-node {
+  font-weight: 600;
+  min-width: 66px;
+}
+.sw-chain-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sw-step {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  padding: 2px 7px;
+  border: 1px solid var(--sw-line, #dfe3e8);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.sw-step.dead { opacity: 0.45; text-decoration: line-through; }
+.sw-arrow { font-style: normal; opacity: 0.5; margin: 0 2px; }
