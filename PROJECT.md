@@ -711,6 +711,62 @@ all candidates, with everything upstream of it deterministic.
 
 ---
 
+# Concepts implemented
+
+An index of what is actually wired up, and where. The second table is the more
+useful one: a list of capabilities is only trustworthy if it also says what is
+absent.
+
+## Frameworks
+
+| | version | where it is used |
+| --- | --- | --- |
+| LangChain | 1.3.13 | tool binding, message handling, `with_fallbacks` |
+| LangChain Core | 1.6.2 | `trim_messages`, runnables |
+| LangGraph | 1.2.9 | the supervisor graph, `AsyncSqliteSaver` checkpointer |
+| LangSmith | 0.10.5 | tracing, project `Market-Analyst-Pro` |
+| LangGraph Studio | CLI | `langgraph.json` → `studio_graph.py` |
+| MCP adapters | 0.3.0 | `mcp_server.py` serves four tools over SSE |
+| LiteLLM | 1.99.0 | the swing router: budgets and fallback chains |
+| FAISS | 1.14.3 | the internal-records vector store |
+| RAGAS | 0.4.3 | retrieval-grounding evaluation |
+| APScheduler | 3.11.3 | the local blocking scheduler in `jobs.py` |
+
+## Agentic patterns
+
+- **Multi-agent supervision** — a supervisor routes to `researcher` / `web` /
+  `trading`, each holding different tools, then a writer composes. A specialist
+  that already ran is never re-asked.
+- **Reflection** — draft, critique, improve, final, with the reviewer seeing
+  what the tools returned rather than the answer alone.
+- **Tool use over MCP** — FAISS records, Tavily web, signals CSV, trade history.
+- **Guardrails** — an input node classifying injection and exfiltration before
+  anything runs; every answer scanned for secrets on the way out.
+- **Human in the loop** — Telegram Approve/Reject on the one path that can place
+  a live order, which *times out to skip*.
+- **Observability** — a token budget and a per-request line, plus `llm_events`
+  recording which model actually served.
+- **Context budgeting** — tool results truncated rather than dropped, trimmed to
+  a boundary that never orphans a tool call.
+- **Model failover** — across providers on budget exhaustion, and on error.
+- **Evaluation** — an LLM judge against written references, RAGAS against what
+  was actually retrieved, and 25 regression checks on the agent loop.
+
+## And what is not implemented
+
+| Absent | What that means here |
+| --- | --- |
+| Persistent memory | the checkpointer holds one conversation; nothing carries between them |
+| GraphRAG | retrieval is similarity over isolated chunks, not relationships |
+| DeepAgents | no planning tool, sub-agents with their own context, or virtual filesystem |
+| LangSmith datasets | zero uploaded; the evals run locally and write JSON |
+
+The first two are the gap between this system and the "advanced agentic RAG"
+tier it is often compared to — memory across steps, and retrieval that follows
+relationships rather than similarity.
+
+---
+
 # Status
 
 Working and autonomous: sector selection, the screen, the 5/13 trigger gate,
