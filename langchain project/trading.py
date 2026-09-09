@@ -12,6 +12,8 @@ Two callers:
 
 import os
 import asyncio
+from datetime import datetime, time as _time
+from zoneinfo import ZoneInfo
 
 from app.db.database import db_session
 from app.brokers.icici_breeze import ICICIBreezeClient
@@ -34,6 +36,41 @@ strategy_svc = StrategyService(mock_broker, breeze_client)
 IS_CI = os.getenv("GITHUB_ACTIONS") == "true"
 APPROVAL_TIMEOUT = int(os.getenv("APPROVAL_TIMEOUT_SECONDS", "900")) if IS_CI else None
 
+# --- How late is too late --------------------------------------------------
+# This job is scheduled for 09:15 IST because the strategy is an entry at the
+# open. It runs on GitHub's `schedule` event, which is best-effort: on
+# 2026-09-09 run #118 was cron'd for 03:45 UTC and started at 08:23 UTC, so the
+# approval prompt reached Telegram at 13:53 IST -- four hours and thirty-eight
+# minutes after the moment it was priced for. The prompt said only
+# "Signal: Green", which is exactly what it says when it is on time.
+#
+# Nothing was placed (the 15-minute CI timeout expired and it skipped), but the
+# failure mode was one tap wide: approving that prompt would have sold options
+# sized on a signal computed for an open that was long gone.
+#
+# So the job now knows what time it was supposed to run, and refuses to ask a
+# question it can no longer stand behind. Within the window it still asks, but
+# it says how late it is -- a decision made with the delay visible is a
+# different decision from one made without it.
+TRADE_SLOT_IST = os.getenv("TRADE_SLOT_IST", "09:15")
+TRADE_MAX_LATENESS_MIN = int(os.getenv("TRADE_MAX_LATENESS_MIN", "90"))
+TZ_IST = "Asia/Kolkata"
+
+
+def _lateness_minutes() -> int:
+    """Minutes between the intended slot today and now, in IST. Never negative."""
+    try:
+        hh, mm = (int(x) for x in TRADE_SLOT_IST.split(":"))
+    except ValueError:
+        return 0
+    now = datetime.now(ZoneInfo(TZ_IST))
+    slot = datetime.combine(now.date(), _time(hh, mm), tzinfo=ZoneInfo(TZ_IST))
+    return max(0, int((now - slot).total_seconds() // 60))
+
+
+def _late_phrase(mins: int) -> str:
+    return f"{mins // 60}h{mins % 60:02d}m" if mins >= 60 else f"{mins}m"
+
 
 async def daily_trade_job():
     print("--- [TRADE] Running Options Selling Strategy ---")
@@ -48,10 +85,29 @@ async def daily_trade_job():
             send_telegram_msg(idle_msg)
             return
 
-        print(f"--- [SIGNAL] Today's Signal: {signal} - requesting approval ---")
+        # 1b. Refuse to ask a stale question. A prompt that arrives hours after
+        #     the open looks identical to one that arrives on time, and the tap
+        #     that answers it is the tap that places the order.
+        late = _lateness_minutes()
+        if late > TRADE_MAX_LATENESS_MIN:
+            msg = (
+                f"Trade skipped — this run started {_late_phrase(late)} after its "
+                f"{TRADE_SLOT_IST} IST slot, and the {signal} signal is priced for "
+                f"the open. Not asking for approval on a stale entry. "
+                f"Dispatch the workflow by hand if you still want it."
+            )
+            print(msg)
+            send_telegram_msg(msg)
+            return
+
+        print(f"--- [SIGNAL] Today's Signal: {signal} - requesting approval "
+              f"({_late_phrase(late)} after the slot) ---")
 
         # 2. HUMAN-IN-THE-LOOP: send Approve/Reject buttons and wait for the tap.
-        token = await send_approval_request(signal)
+        #    The prompt carries the delay, so lateness is part of what you are
+        #    approving rather than something you have to notice.
+        detail = signal if late <= 5 else f"{signal} · {_late_phrase(late)} late"
+        token = await send_approval_request(detail)
         try:
             approved = await wait_for_approval(token, timeout_seconds=APPROVAL_TIMEOUT)
         except asyncio.TimeoutError:

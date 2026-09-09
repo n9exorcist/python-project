@@ -524,7 +524,11 @@ def _open_positions(con: sqlite3.Connection, session: str) -> list[str]:
             held = (date.fromisoformat(session) - date.fromisoformat(ed)).days
         except Exception:
             held = 0
-        out.append(f"  {sym} x{qty} @ {entry} · SL {stop} · TGT {target} "
+        # Explicit 2dp. These come back as REAL, and an entry stored as
+        # 420.05 prints as 420.04998779296875 the moment float repr is left to
+        # its own devices -- which is what the 2026-09-09 brief did.
+        out.append(f"  {sym} x{qty} @ {entry:,.2f} · SL {stop:,.2f} "
+                   f"· TGT {target:,.2f} "
                    f"· {max(held, 0)}/{pb.TIME_STOP_DAYS} sessions")
     return out
 
@@ -558,8 +562,27 @@ def job_brief() -> None:
             "atr_pct REAL, screen_version TEXT, llm_verdict TEXT, "
             "created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(symbol, scan_date));"
             "CREATE TABLE IF NOT EXISTS paper_positions (id INTEGER PRIMARY KEY);"
+            "CREATE TABLE IF NOT EXISTS job_runs ("
+            "job TEXT, session TEXT, ran_at TEXT, PRIMARY KEY (job, session));"
         )
-        last = con.execute("SELECT MAX(scan_date) FROM signals").fetchone()[0]
+        # The last session that was SCREENED -- which is not the same as the
+        # last session that produced a candidate.
+        #
+        # Reading MAX(scan_date) off `signals` made a clean screen indis-
+        # tinguishable from no screen at all, because a session only reaches
+        # `signals` when something passes. On 2026-09-08 the scan ran, examined
+        # 28 names and passed none; the next morning's brief reported the 09-07
+        # session and then accused the agent of skipping 09-08. Both halves were
+        # wrong, and the second is the kind of wrong that trains you to ignore
+        # the warning.
+        #
+        # `job_runs` records the screen itself. It is written only after the
+        # work happened, and deliberately NOT written by a degraded run -- so a
+        # session that genuinely went unscreened still says so.
+        last = con.execute(
+            "SELECT MAX(session) FROM job_runs WHERE job='scan'").fetchone()[0]
+        if not last:  # books written before job_runs existed
+            last = con.execute("SELECT MAX(scan_date) FROM signals").fetchone()[0]
         cands = con.execute(
             "SELECT symbol, close, rsi14, vol_ratio, ext_pct, llm_verdict "
             "FROM signals WHERE scan_date=? ORDER BY symbol", (last,)
@@ -575,6 +598,10 @@ def job_brief() -> None:
     else:
         lines.append(f"LAST SCREEN — {last} session")
         lines.append(f"  {_funnel_line(last, len(cands))}")
+        if not cands:
+            # Say it. An empty list under a funnel line is ambiguous between
+            # "nothing passed" and "the candidates failed to load".
+            lines.append("  nothing passed the screen.")
         for sym, close, rsi, vol, ext, verdict in cands:
             lines.append(f"  {(verdict or 'screened').upper():9s} {sym}")
             lines.append(f"            {close} · RSI {rsi} · vol x{vol} "

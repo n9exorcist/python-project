@@ -90,6 +90,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # actions/checkout takes github.sha, which is resolved when the RUN IS
+      # CREATED -- not when the job starts. So two triggers a few seconds apart
+      # both check out the commit from BEFORE either of them wrote anything, and
+      # the `already_ran` guard in jobs.py cannot work, because it reads job_runs
+      # out of the very swing.db being checked out.
+      #
+      # Measured on 2026-09-09. The concurrency group did its job perfectly:
+      # run #27 held the runner 10:10:11-10:11:03 and pushed at 10:11:01, and
+      # run #28's job started at 10:11:06, three seconds after #27 finished.
+      # #28 still re-screened all 69 symbols and sent a second identical
+      # "no setups today", because it was reading a book written before #27 ran.
+      #
+      # Serialising runs is therefore not enough; the second run has to READ what
+      # the first one wrote. Taking the branch tip after checkout is what makes
+      # the spare slots genuinely free, which is the assumption the whole
+      # multi-slot schedule rests on.
+      - name: Take the newest paper book, not the one pinned at dispatch
+        run: |
+          git fetch --depth=1 origin "${GITHUB_REF_NAME}"
+          git reset --hard "origin/${GITHUB_REF_NAME}"
+          echo "book is at $(git rev-parse --short HEAD)"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
