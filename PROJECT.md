@@ -676,6 +676,27 @@ With no argument, `jobs.py` starts a blocking scheduler.
 
 ## Things that will bite
 
+- **`actions/checkout` pins the commit at run *creation*, not at run start.**
+  Two dispatches six seconds apart therefore check out the same commit — the one
+  from before either of them wrote anything. On 2026-09-09 the concurrency group
+  worked perfectly: run #27 held the runner 10:10:11–10:11:03 and pushed at
+  10:11:01, and run #28's job started at 10:11:06, three seconds after #27
+  finished. #28 still re-screened all 69 symbols and sent a second identical
+  "no setups today", because it was reading a paper book written before #27 ran,
+  so `already_ran` had nothing to see. **Serialising runs is not enough when the
+  state ships inside the checkout — the second run has to re-read what the first
+  one wrote.** Every run now resets to the branch tip after checkout. That is
+  what makes the spare slots free, which is the assumption the whole multi-slot
+  schedule rests on.
+- **A table keyed on success cannot tell you about failure.** The morning brief
+  read the last screen off `MAX(scan_date)` in `signals`, and a session only
+  reaches `signals` when something *passes*. So a clean screen and a missing
+  screen were indistinguishable, and on 2026-09-09 the brief reported the 09-07
+  session and announced that 09-08 "has closed and was not screened" — a day it
+  had in fact screened, examining 28 names and passing none. With the trigger
+  gate on, most days pass nothing, so that note was about to fire nearly every
+  morning. A warning that cries wolf daily is worse than no warning. The
+  screen's own record is `job_runs`.
 - **Replacing a SQLite file means deleting its `-wal` too.** `memory.db` failed
   `integrity_check` with btree damage confined to LangGraph's `checkpoints` and
   `writes`. The repair rebuilt it cleanly — and it still reported corruption,
@@ -777,6 +798,23 @@ and the weekly agent loop.
 Verified running unattended: on 2026-09-07 the agent screened the 07-Sep session
 at 15:46 IST, passed **JKPAPER**, took it, and queued it for the next open —
 with no human in the loop.
+
+- **The live-order path is still on GitHub's `schedule`, and it drifts like
+  everything else.** On 2026-09-09 the options workflow was cron'd for 03:45 UTC
+  and started at 08:23 — 4h38m late — so "Trade approval required / Signal:
+  Green" reached Telegram at 13:53 IST, worded exactly as it is worded when it
+  is on time. Nothing was placed: the 15-minute CI approval timeout expired and
+  the job skipped, which is the safe default working. But the failure was one
+  tap wide, and the tap would have sold options sized on a signal priced for an
+  open four and a half hours gone.
+
+  `daily_trade_job` now knows what time it was meant to run. Past
+  `TRADE_MAX_LATENESS_MIN` (90) it refuses to ask at all and says why; inside
+  the window it still asks, but the prompt carries the delay, so lateness is
+  part of what is being approved rather than something you have to notice. The
+  remaining work is the same fix the swing agent already got: a fourth
+  cron-job.org job dispatching `trade.yml` at 09:15 IST, so the guard is a
+  backstop rather than the only line of defence.
 
 Open:
 
