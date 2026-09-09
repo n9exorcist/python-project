@@ -83,8 +83,9 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST \
 
 ### cron-job.org — no code, ~5 minutes, machine-independent
 
-Free account, then **Create cronjob** for each row. All three share the same
-URL, method and headers; only the schedule and body differ.
+Free account, then **Create cronjob** for each row. The three swing jobs share
+the same URL, method and headers; only the schedule and body differ. The options
+trade is a fourth job pointing at a different workflow -- see below.
 
 ```
 URL     https://api.github.com/repos/n9exorcist/python-project/actions/workflows/swing.yml/dispatches
@@ -106,6 +107,38 @@ Headers
 A successful dispatch returns **204 with an empty body**, so set "treat as
 success" to 2xx and enable failure notifications — that is what tells you the
 token has expired.
+
+#### The fourth job: the options trade
+
+This one is not the swing agent, and two fields differ.
+
+```
+URL     https://api.github.com/repos/n9exorcist/python-project/actions/workflows/trade.yml/dispatches
+Body    {"ref":"main"}
+```
+
+| Job | Schedule (timezone `Asia/Kolkata`) | Request body |
+| --- | --- | --- |
+| `options trade` | 09:15, Mon-Fri | `{"ref":"main"}` |
+
+`trade.yml` declares `workflow_dispatch:` with **no inputs**, so an `inputs`
+object here is a 422. Everything else — headers, method, 2xx-is-success,
+failure notifications — is identical to the swing jobs.
+
+This is the job that most needs a real clock. On 2026-09-09 GitHub started it
+4h38m after its cron time, so "Trade approval required / Signal: Green" arrived
+at 13:53 IST worded exactly as it is worded when on time. Nothing was placed —
+the 15-minute CI approval timeout expired — but the failure was one tap wide.
+`daily_trade_job` now refuses to ask past `TRADE_MAX_LATENESS_MIN` (90), which
+is a backstop, not a fix: the fix is dispatching it on time.
+
+**Once this job is verified, remove the `schedule:` block from `trade.yml`.**
+With the lateness guard in place a drifted GitHub slot no longer prompts — it
+sends "Trade skipped, Nh late" instead, every weekday, on top of the punctual
+09:15 prompt. And unlike the swing agent this job cannot dedupe: it never
+commits state back, so each run starts blank with no way to know the day was
+already handled. A slot that can only ever arrive too late to be useful is not
+a backstop; it is a second message saying so.
 
 ### Cloudflare Worker — if you would rather not paste a token into a web form
 
