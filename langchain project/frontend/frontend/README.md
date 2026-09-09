@@ -163,11 +163,13 @@ powershell
 cd "C:\Users\narayanan.selvaraj\python project\langchain project"
 .\venv\Scripts\activate
 python mcp_server.py
+venv\Scripts\python.exe mcp_server.py
 Terminal 2 — FastAPI Backend
 powershell
 cd "C:\Users\narayanan.selvaraj\python project\langchain project"
 .\venv\Scripts\activate
 uvicorn main:app --host 127.0.0.1 --port 8001 --reload
+ venv\Scripts\uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 Terminal 3 — LangGraph Studio
 powershell
 cd "C:\Users\narayanan.selvaraj\python project\langchain project"
