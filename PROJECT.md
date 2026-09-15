@@ -730,6 +730,15 @@ With no argument, `jobs.py` starts a blocking scheduler.
 
 ## Things that will bite
 
+- **The stream's exception handler is outside the guardrail.** `routes.py`
+  yielded `str(e)` verbatim, so when both providers ran out of quota the
+  assistant's reply ended with Groq's raw JSON — model id, exact token counts,
+  a billing upsell link, and the account's **organisation id**. That path
+  bypasses the graph entirely, so the output scan that checks every answer for
+  secrets never saw it. Provider detail belongs in the log; the user gets what
+  they can act on — *"Out of quota for today… try again in about 16m39s"* — and
+  an `org_` pattern is redacted on the way out whichever branch built the
+  message.
 - **A per-thread message list sliced from the front gives you the oldest
   context, not the current one.** `state["messages"]` accumulates across turns,
   so `"".join(tool_results)[:BUDGET]` silently becomes "the first question's
@@ -811,6 +820,19 @@ provider's own allowance really was exceeded.
 
 An unrecognised model gets its own bucket rather than defaulting to Groq's —
 quietly charging a new model to the wrong budget is the bug this replaced.
+
+And the cap itself was wrong, in the same direction. Groq's own 429 states it:
+
+```
+on tokens per day (TPD): Limit 200000, Used 199984, Requested 2329
+```
+
+So the gauge read `23,080/100,000 (23%)` when the truth was `12%` —
+understating headroom by half. `note_cap()` now learns the number from any 429
+that quotes one and persists it to `logs/provider_caps.json`; an explicit
+`DAILY_TOKEN_LIMIT` still wins, because a 429 does not get to argue with a
+deliberate setting. **A cap this system guesses at is a cap that drifts, and it
+drifted twice before anyone read the provider's own message.**
 Files written before the change carry only a raw total; they load as
 `today 190,483 tok`, with no denominator, rather than inventing one.
 
