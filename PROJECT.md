@@ -548,6 +548,60 @@ On the same question, before and after:
 65% fewer tokens and five times faster, because the old path spent 14,000 extra
 tokens rewriting a good answer into a worse one.
 
+### The reviewer was reading evidence from three turns ago
+
+Showing the reviewer the tool output fixed the wrong half of the problem. It
+gathered tool results from the whole **thread** — `state["messages"]` is
+checkpointed per thread, not per turn — joined them, and took the first 4,000
+characters. By the fourth question that window is entirely the *first*
+question's retrieval.
+
+```
+tool results in state : 5
+joined length         : 21,371 chars
+budget                :  4,000 chars
+web result starts at  : 17,022      <- 13,000 chars past the cutoff
+```
+
+So on "Search the web for the current market reaction to Accenture's stock" the
+reviewer was handed an earnings press-release PDF from three turns earlier and
+asked to judge an answer about that day's share price. The writer had the real
+thing and used it:
+
+| checkpoint | `final_answer` |
+| --- | --- |
+| 44 | "Accenture — Today's market reaction… down about 17%, around $128.30" |
+| 45 | same answer, `reflection_verdict = revise` |
+| 46 | "I'm unable to provide a current market-reaction summary…" |
+
+The critique read *"the sources contain only dividend details and earnings
+data"* — a verbatim description of what it had been given. **The verdict was
+sound; the evidence was stale.** The same slice had already broken the Market
+Cycles answer: retrieval returned "Gold and silver are considered safe-haven
+assets" and "The defense sector relies heavily on advanced robotics", the writer
+wrote them up, and reflection replaced it with "does not contain any
+information".
+
+Two changes: start at the last human message, and budget **per result** rather
+than over the join, so no single large result can crowd the others out of the
+window. Replayed against the stored checkpoint with the same critique prompt and
+the same answer:
+
+| evidence | verdict |
+| --- | --- |
+| old slice, price absent | REVISE: "fabricates a market reaction that isn't in the context" — delete it |
+| new slice, price present | REVISE: drop the "2.3× the 30-day average" volume figure, keep the rest |
+
+Still REVISE, and correctly: that volume figure appears nowhere in the tool
+output. The reviewer now removes an invention instead of deleting the grounded
+answer around it.
+
+No heuristic blocking refusal-shaped critiques was added. Ordering a denial is
+the right call when the context genuinely lacks the answer — "search our
+internal records for a chocolate cake recipe", in the same thread, is exactly
+that case and passed. Fixing the evidence restores the distinction at its
+source; a heuristic would have broken the one turn that was already working.
+
 ### Each specialist is told which tools it holds
 
 A comparison question needed records *and* the web. The model called
@@ -676,6 +730,11 @@ With no argument, `jobs.py` starts a blocking scheduler.
 
 ## Things that will bite
 
+- **A per-thread message list sliced from the front gives you the oldest
+  context, not the current one.** `state["messages"]` accumulates across turns,
+  so `"".join(tool_results)[:BUDGET]` silently becomes "the first question's
+  retrieval" by the fourth question. Anything reviewing *this* turn has to start
+  at the last human message, and truncate per item rather than over the join.
 - **`actions/checkout` pins the commit at run *creation*, not at run start.**
   Two dispatches six seconds apart therefore check out the same commit — the one
   from before either of them wrote anything. On 2026-09-09 the concurrency group
