@@ -589,6 +589,24 @@
   color: #52514e;
 }
 
+/* The market gate. Closed is a state you must not be able to miss, so it reads
+   as a stop rather than as a note; open is deliberately quiet -- a filter that
+   shouts when it is doing nothing trains you to skip past it. */
+.sw-note.gate-closed {
+  background: #fef2f2;
+  border-left: 3px solid #d03b3b;
+  padding: 9px 12px;
+  border-radius: 0 8px 8px 0;
+  color: #7f1d1d;
+}
+.sw-note.gate-open {
+  background: #f0fdf4;
+  border-left: 3px solid #1baf7a;
+  padding: 9px 12px;
+  border-radius: 0 8px 8px 0;
+  color: #14532d;
+}
+
 /* hover layer */
 .sw-tip {
   position: fixed;

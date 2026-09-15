@@ -552,7 +552,7 @@ export default function SwingDashboard() {
     );
   }
 
-  const { scan, funnel, books, tokens, sectors, rules } = data;
+  const { scan, funnel, books, tokens, sectors, rules, regime } = data;
   const positions = (data.positions || []).filter((p) => isShownBook(p.book));
   const closed = (data.closed || []).filter((c) => isShownBook(c.book));
   const markBySym = new Map((marks || []).map((m) => [`${m.book}:${m.id}`, m]));
@@ -635,6 +635,35 @@ export default function SwingDashboard() {
           </button>
         </div>
       </header>
+
+      {/* The market gate, stated out loud.
+
+          A gate that blocks the screen and says nothing renders a dashboard
+          identical to a calm market with no setups -- the same ambiguity the
+          rejection funnel exists to kill. When it is closed this is the most
+          important thing on the page, because every empty panel below it is
+          explained by this line and by nothing else. */}
+      {regime ? (
+        <p
+          className={`sw-note ${regime.gated ? "gate-closed" : "gate-open"}`}
+          title="The screen only runs when the index is in an uptrend on the same EMA 5/13 signal the stock trigger uses."
+        >
+          <b>
+            {regime.symbol} {regime.bullish ? "bullish" : "bearish"}
+          </b>{" "}
+          — {fmtNum(regime.close)} · EMA5 {fmtNum(regime.ema_fast)} vs EMA13{" "}
+          {fmtNum(regime.ema_slow)}
+          {regime.gap_pct === null || regime.gap_pct === undefined
+            ? ""
+            : ` (${regime.gap_pct > 0 ? "+" : ""}${regime.gap_pct}%)`}
+          {regime.last_cross_date
+            ? ` · ${regime.last_cross_side} cross ${regime.last_cross_date}`
+            : ""}
+          {regime.gated
+            ? " — no screen today. Sector and stock selection are skipped entirely while the index is below its own trigger. Open positions are still marked and stopped as usual."
+            : " — the screen runs."}
+        </p>
+      ) : null}
 
       {refreshNote ? (
         <p className="sw-note refresh-note">

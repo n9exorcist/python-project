@@ -275,6 +275,34 @@ def job_scan() -> None:
     if already_ran("scan", today):
         print(f"[scan] session {today} already screened; nothing to do")
         return
+
+    # The index first, before anything else costs a request.
+    #
+    # Sector strength is RELATIVE, and the board does not say so. On 2026-09-15
+    # the leading sector was Paper at +0.56% with breadth 14/29 -- more of its
+    # constituents fell than rose -- while NIFTY closed -1.19% with EMA5 below
+    # EMA13 and RSI at 22. "Best sector" that day meant least bad, and a screen
+    # reading that board has no way to tell the difference.
+    #
+    # So: regime -> sector -> stock -> trigger, each step only meaningful if the
+    # one before it said yes. Placed above get_universe() because a closed gate
+    # should cost nothing: no Moneycontrol resolve, no price fetches, no analyst
+    # call.
+    import market
+    may_screen, regime, why = market.check(today, db_path=DB_PATH)
+    if not may_screen:
+        # Claim the session. Three spare slots re-deciding the same closed gate
+        # would send the same message three times, and the point of the spare
+        # slots is to cover a dropped run, not to repeat a completed one.
+        record_run("scan", today)
+        notify(f"{today}: market gate CLOSED — no screen today.\n{why}\n"
+               f"Nothing is screened while the index is below its own trigger. "
+               f"Open positions are still marked and stopped as usual.")
+        print(f"[scan] market gate closed: {why}")
+        return
+    if regime is not None:
+        print(f"[scan] market gate open: {why}")
+
     syms = get_universe(refresh=True)
     cands = scan(syms, _source(), db_path=DB_PATH, session=today)
 
@@ -301,6 +329,7 @@ def job_scan() -> None:
             # the universe list failed to load. The size is the tell.
             sec = _sector_line()
             notify(f"{today}: no setups today.\n{_funnel_line(today)}"
+                   + (f"\n{regime.line()}" if regime is not None else "")
                    + (f"\n{sec}" if sec else ""))
         return
 
@@ -313,6 +342,8 @@ def job_scan() -> None:
     # passed announced "1 of 8 passed the screen" and then named nothing at all.
     # The screen's own numbers are the point; the analyst is commentary on top.
     lines = [f"SCAN {today} — {len(cands)} of {len(syms)} passed the screen"]
+    if regime is not None:
+        lines.append(regime.line())
     sec = _sector_line()
     if sec:
         lines.append(sec)

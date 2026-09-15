@@ -182,6 +182,42 @@ def _funnel(con: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _regime(con: sqlite3.Connection) -> dict[str, Any] | None:
+    """The index reading that gated (or did not gate) the latest screen.
+
+    Returns None when the gate has never run, so a UI written before this
+    existed keeps working and a fresh database does not render an empty pill.
+
+    This has to be visible. A gate that blocks the screen and says nothing
+    produces a dashboard identical to a calm market with no setups -- the exact
+    ambiguity the rejection funnel was added to kill.
+    """
+    if not _table_exists(con, "market_regime"):
+        return None
+    r = con.execute(
+        "SELECT session, symbol, bar_date, close, ema_fast, ema_slow, bullish, "
+        "gated, last_cross_date, last_cross_side FROM market_regime "
+        "ORDER BY session DESC LIMIT 1"
+    ).fetchone()
+    if not r:
+        return None
+    (session, symbol, bar_date, close, ef, es, bullish, gated,
+     cross_date, cross_side) = r
+    return {
+        "session": session,
+        "symbol": symbol,
+        "bar_date": bar_date,
+        "close": close,
+        "ema_fast": ef,
+        "ema_slow": es,
+        "gap_pct": round((ef - es) / es * 100, 2) if es else None,
+        "bullish": bool(bullish),
+        "gated": bool(gated),
+        "last_cross_date": cross_date,
+        "last_cross_side": cross_side,
+    }
+
+
 def _positions(con: sqlite3.Connection) -> list[dict[str, Any]]:
     if not _table_exists(con, "paper_positions"):
         return []
@@ -624,6 +660,7 @@ def dashboard(day: str | None = None) -> dict[str, Any]:
                 "structural_rr": pb.STRUCTURAL_RR,
                 "time_stop_days": pb.TIME_STOP_DAYS,
             },
+            "regime": _regime(con),
             "sectors": _sectors(con),
             "scan": _latest_scan(con),
             "funnel": _funnel(con),
