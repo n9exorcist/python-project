@@ -589,6 +589,15 @@
   color: #52514e;
 }
 
+/* The gate pill. Red, because it is the one state on this page that makes every
+   other panel mean something different, and a muted grey "gated" reads as a
+   minor caveat rather than as the reason the screen did not run. */
+.sw-pill.gated {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
 /* The market gate. Closed is a state you must not be able to miss, so it reads
    as a stop rather than as a note; open is deliberately quiet -- a filter that
    shouts when it is doing nothing trains you to skip past it. */

@@ -590,6 +590,30 @@ export default function SwingDashboard() {
           </p>
         </div>
         <div className="sw-head-right">
+          {/* Step 0, and therefore the first thing on the page. Everything the
+              rest of the dashboard shows -- an empty funnel, no candidates, a
+              sector board leading at +0.56% -- reads completely differently
+              depending on this one bit, so it cannot be somewhere you have to
+              scroll to find. */}
+          {regime ? (
+            <span
+              className={`sw-pill ${regime.gated ? "gated" : "ok"}`}
+              title={
+                `${regime.symbol} ${regime.close} · EMA5 ${regime.ema_fast} vs ` +
+                `EMA13 ${regime.ema_slow}` +
+                (regime.last_cross_date
+                  ? ` · ${regime.last_cross_side} cross ${regime.last_cross_date}`
+                  : "") +
+                (regime.gated
+                  ? " — the screen is skipped while the index is below its own trigger."
+                  : " — the screen runs.")
+              }
+            >
+              {regime.gated
+                ? `NIFTY bearish · gated`
+                : `NIFTY bullish · screening`}
+            </span>
+          ) : null}
           {scan.scan_date ? (
             /* "stale" now means the screen is behind the MARKET, not behind the
                calendar. Before 15:30 IST there is no completed bar for today, so
