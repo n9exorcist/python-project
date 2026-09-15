@@ -6,6 +6,7 @@ routes read it via request.app.state.app_graph rather than a module global.
 """
 
 import json
+import re
 import uuid
 import asyncio
 
@@ -14,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 
 from observability import obs_handler
+import observability as obs
 
 DEFAULT_THREAD_ID = "market_analyst_session"
 
@@ -84,6 +86,57 @@ async def clear_history(thread_id: str = DEFAULT_THREAD_ID):
     new_thread_id = f"market_analyst_session_{uuid.uuid4().hex[:8]}"
     return {"status": "ok", "message": "New session started", "thread_id": new_thread_id}
 
+
+
+# ---------------------------------------------------------------------------
+# Provider errors are for the log, not for the chat window
+# ---------------------------------------------------------------------------
+# The stream's exception handler used to yield `str(e)` verbatim. When Groq's
+# daily token cap ran out on 2026-09-15 the assistant's reply ended with the
+# provider's raw JSON -- the model id, the exact token counts, a billing upsell
+# link, and the account's organisation id:
+#
+#     [Server error: Error code: 429 - {'error': {'message': 'Rate limit reached
+#     for model `openai/gpt-oss-120b` in organization `org_01kjw...`
+#
+# That path bypasses the graph, so the output guardrail that scans every answer
+# for secrets never saw it. An identifier the user cannot act on does not belong
+# in an answer; what they can act on is what happened and when to try again.
+_ORG_RE = re.compile(r"\borg_[A-Za-z0-9]+\b")
+_RETRY_RE = re.compile(r"try again in ([0-9]+m[0-9.]+s|[0-9.]+s|[0-9]+m)", re.I)
+_LIMIT_RE = re.compile(r"\(TPD\):\s*Limit\s*([0-9]+)", re.I)
+
+
+def _user_facing_error(e: Exception) -> str:
+    """One sentence the user can act on. Everything else goes to the log."""
+    detail = str(e)
+    print(f"[ERROR] chat stream failed: {detail}")
+
+    low = detail.lower()
+    if "rate_limit" in low or "429" in detail:
+        # The provider states its own cap here, which is the only reliable
+        # source for it -- teach the budget gauge rather than guessing again.
+        m = _LIMIT_RE.search(detail)
+        if m:
+            try:
+                obs.note_cap("groq", int(m.group(1)))
+            except Exception:
+                pass
+
+        r = _RETRY_RE.search(detail)
+        when = f" Try again in about {r.group(1)}." if r else ""
+        if "per day" in low or "tpd" in low:
+            msg = ("Out of quota for today: the primary model hit its daily token "
+                   "limit and the fallback is exhausted too." + when)
+        else:
+            msg = "The models are rate-limited right now." + when
+    else:
+        msg = ("Something went wrong handling that request. The details are in "
+               "the server log.")
+
+    # Belt and braces: nothing that looks like an account identifier ships,
+    # whatever future branches above decide to include.
+    return f"[{_ORG_RE.sub('org_[redacted]', msg)}]"
 
 @router.post("/chat/stream")
 async def chat_stream(request: Request):
@@ -242,7 +295,7 @@ async def chat_stream(request: Request):
                     yield f"data: {json.dumps({'text': final_answer})}\n\n"
 
         except Exception as e:
-            yield f"data: {json.dumps({'text': f'[Server error: {str(e)}]'})}\n\n"
+            yield f"data: {json.dumps({'text': _user_facing_error(e)})}\n\n"
 
         # Runs whether the request succeeded or errored, so a failed run still logs
         # its metrics and counts its tokens toward the daily total.

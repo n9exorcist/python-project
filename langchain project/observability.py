@@ -57,7 +57,15 @@ METRICS_FILE = LOG_DIR / "metrics.jsonl"
 # Groq meters tokens per day. Gemini's free tier meters REQUESTS per day, per
 # model -- its token count is informational, not a budget. Showing each against
 # its own denominator is what makes a percentage mean something again.
-DAILY_TOKEN_LIMIT = int(os.getenv("DAILY_TOKEN_LIMIT", "100000"))
+# 200,000, not the 100,000 this started with. Read off the provider's own 429
+# rather than assumed -- which is the only way this number has ever been right:
+#
+#   Rate limit reached for model `openai/gpt-oss-120b` ... on tokens per day
+#   (TPD): Limit 200000, Used 199984, Requested 2329
+#
+# A cap guessed at is a cap that silently drifts from the truth, so `note_cap()`
+# below keeps it honest: every 429 that states a limit corrects this one.
+DAILY_TOKEN_LIMIT = int(os.getenv("DAILY_TOKEN_LIMIT", "200000"))
 GEMINI_DAILY_REQUESTS = int(os.getenv("GEMINI_DAILY_REQUESTS", "20"))
 WARN_AT = 0.80
 
@@ -65,6 +73,48 @@ WARN_AT = 0.80
 TOKEN_CAPS = {"groq": DAILY_TOKEN_LIMIT}
 # Request-capped providers: name -> daily request allowance.
 REQUEST_CAPS = {"gemini": GEMINI_DAILY_REQUESTS}
+
+# Caps learned from provider errors, so a tier change corrects itself instead of
+# waiting to be noticed. Disk-backed: the lesson is worth more than one process.
+CAPS_FILE = LOG_DIR / "provider_caps.json"
+
+
+def _load_learned_caps():
+    if CAPS_FILE.exists():
+        try:
+            for name, cap in json.loads(CAPS_FILE.read_text()).items():
+                if isinstance(cap, int) and cap > 0:
+                    TOKEN_CAPS[name] = cap
+        except Exception:
+            pass
+
+
+def note_cap(provider: str, cap: int) -> None:
+    """Record a daily token cap a provider stated in an error.
+
+    Only ever called with a number the provider itself quoted. An env override
+    wins: if DAILY_TOKEN_LIMIT was set deliberately, a 429 does not get to
+    argue with it.
+    """
+    if cap <= 0 or TOKEN_CAPS.get(provider) == cap:
+        return
+    if provider == "groq" and os.getenv("DAILY_TOKEN_LIMIT"):
+        return
+    old = TOKEN_CAPS.get(provider)
+    TOKEN_CAPS[provider] = cap
+    try:
+        learned = {}
+        if CAPS_FILE.exists():
+            learned = json.loads(CAPS_FILE.read_text())
+        learned[provider] = cap
+        CAPS_FILE.write_text(json.dumps(learned))
+    except Exception:
+        pass
+    print(f"--- [OBS] {provider} daily token cap corrected {old:,} -> {cap:,} "
+          f"(from the provider's own rate-limit message) ---")
+
+
+_load_learned_caps()
 
 
 def _provider_of(model: str) -> str:
