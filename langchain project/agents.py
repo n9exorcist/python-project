@@ -58,6 +58,11 @@ MAX_REFLECT = 1        # rewrite attempts after self-critique
 # two caps keep the request inside the primary's budget instead.
 MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "5000"))
 MAX_TOOL_CHARS = int(os.getenv("MAX_TOOL_CHARS", "4000"))
+# Floor for one tool result inside the reviewer's evidence window. With
+# several results in a turn the even share can shrink below what it takes to
+# tell what a result actually contained, and a reviewer that cannot tell
+# reverts to the failure this evidence exists to prevent.
+MIN_EVIDENCE_CHARS = int(os.getenv("MIN_EVIDENCE_CHARS", "800"))
 
 
 def _cap_tool_output(msgs):
@@ -396,14 +401,63 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
         # A reviewer that cannot see the evidence cannot tell "nothing was
         # found" from "something was found and dropped", which is the only
         # distinction that matters here.
-        retrieved: list[str] = []
-        for m in state.get("messages", []):
+        # ...but only THIS turn's, and not the first 4,000 characters of every
+        # turn's.
+        #
+        # `state["messages"]` is checkpointed per THREAD, so it holds every tool
+        # result the conversation has ever produced. Joining all of them and
+        # slicing `[:MAX_TOOL_CHARS]` takes the OLDEST 4,000 characters and
+        # throws away everything the current turn retrieved.
+        #
+        # Measured on thread market_analyst_session_9d621654, the turn
+        # "Search the web for the current market reaction to Accenture's stock":
+        #
+        #     tool messages in state : 5
+        #     joined length          : 21,371 chars
+        #     MAX_TOOL_CHARS         : 4,000
+        #     web result starts at   : 17,022
+        #
+        # The writer had answered correctly from the Tavily result -- price
+        # $128.30, down ~17%, Q3 miss, 2027 outlook cut. The reviewer was shown
+        # an earnings press-release PDF from three turns earlier, concluded the
+        # market reaction "isn't present in the retrieved context", and ordered
+        # a revision saying the sources "contain only dividend details and
+        # earnings data". That is a verbatim description of what it was given.
+        # The verdict was sound; the evidence was three turns stale.
+        #
+        # So: start at the last human message, and budget PER RESULT rather than
+        # over the join, so no single large result can crowd the others out of
+        # the window. Tool output front-loads its useful content, so each share
+        # keeps its head.
+        msgs = state.get("messages", [])
+        turn_start = 0
+        for i in range(len(msgs) - 1, -1, -1):
+            if getattr(msgs[i], "type", "") == "human":
+                turn_start = i
+                break
+
+        this_turn: list[str] = []
+        for m in msgs[turn_start:]:
             if getattr(m, "type", "") != "tool":
                 continue
             c = m.content if isinstance(m.content, str) else str(m.content)
             if c:
-                retrieved.append(c)
-        evidence = "\n---\n".join(retrieved)[:MAX_TOOL_CHARS]
+                this_turn.append(c)
+
+        if this_turn:
+            share = max(MIN_EVIDENCE_CHARS, MAX_TOOL_CHARS // len(this_turn))
+            retrieved = [
+                c if len(c) <= share else c[:share] + "\n...[truncated]"
+                for c in this_turn
+            ]
+        else:
+            retrieved = []
+        evidence = "\n---\n".join(retrieved)
+        # Say what the reviewer is judging on. When a verdict goes wrong the
+        # first question is always "what did it actually see", and on the day
+        # it did go wrong that was not answerable from the logs.
+        print(f"--- [REFLECT] evidence: {len(this_turn)} tool result(s) this "
+              f"turn, {len(evidence):,} chars ---")
 
         sys = (
             "You are a strict reviewer. Given the user's QUESTION, the RETRIEVED "
