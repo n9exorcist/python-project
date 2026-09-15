@@ -25,7 +25,15 @@ The design follows one documented idea: **pick the sector first, then the stock
 inside it.** A screen run over an index is a screen with no thesis; the sector
 choice is the thesis, and the screen only decides which name expresses it.
 
+Above that sits one more question, asked before any of it: **is the index worth
+trading at all.** Each step is only meaningful if the one before it said yes —
+
 ```
+regime  ->  sector  ->  stock  ->  trigger
+```
+
+```
+market.py        is the INDEX in an uptrend? if not, nothing below runs
 rules.py         the screen's thresholds, and the constitution governing changes
 sectors.py       Moneycontrol sector board -> rank sectors over N sessions
 universe.py      the best sector's constituents -> the day's universe
@@ -37,6 +45,56 @@ paper_broker.py  fills at the NEXT session's open, two rule sets in parallel
 jobs.py          schedules the above and reports to Telegram
 eval.py          weekly: Observe, Eval, Plan, Act -> adjusts rules.py
 ```
+
+### 0. The market gate — `market.py`
+
+Sector strength is **relative**, and the board does not say so. On 2026-09-15
+the leading sector was Paper at **+0.56%**, with breadth **14 / 29** — more of
+its constituents fell than rose — while NIFTY closed **−1.19%**, EMA5
+23,401.76 below EMA13 23,685.66, RSI 22. "Best sector" that day meant *least
+bad*, and a screen reading that board has no way to tell the difference.
+
+So the index is asked first, using the **same indicator the stock trigger
+uses** — EMA 5/13, the `5 13 14 1.5 1 2 3` in the chart header. One definition
+of trend for both means the gate and the entry cannot disagree about what
+bullish means, which is how a regime filter usually starts quietly contradicting
+the signal it exists to protect.
+
+One difference, deliberate. For a stock the trigger is an **event** and must
+have fired within `TRIGGER_MAX_BARS`. For the index it is a **state**: in an
+uptrend since the last buy cross and still in one. Demanding a fresh index cross
+would close the gate on every day except the handful after a turn — not a
+regime filter, a different strategy.
+
+Validated against the chart, to the decimal:
+
+```
+chart   C 23,118.60   EMA5 23,401.76   EMA13 23,685.66
+ours    C 23,118.60   EMA5 23,401.76   EMA13 23,685.66
+```
+
+and the crossovers land on the plotted labels — BUY 2026-07-29, SELL
+2026-08-17, the markers sitting just past the 27-Jul and 14-Aug gridlines.
+
+Five choices worth knowing:
+
+- **It sits above `get_universe()`**, so a closed gate costs nothing: no
+  Moneycontrol resolve, no price fetches, no analyst call.
+- **A closed gate claims the session** in `job_runs`. Three spare slots
+  re-deciding the same closed gate would send the same message three times.
+- **A fetch failure OPENS the gate.** A Yahoo outage silently suspending the
+  strategy, with "no setups today" as the only symptom, is worse than no gate —
+  it looks identical to a calm market.
+- **Every reading is recorded**, not only the blocks. A table containing just
+  the days a filter fired cannot answer what that filter cost.
+- **Marking and stops are untouched.** The gate blocks new entries, never exits.
+
+Fills are deliberately *not* gated: `job_fill` runs at 09:16 against the same
+last-complete session the scan used, so the gate would always return the answer
+it gave at 15:40. The check would be dead code.
+
+`REQUIRE_MARKET_UPTREND=0` restores the old behaviour; `MARKET_SYMBOL` picks a
+different benchmark.
 
 ### 1. The sector board — `sectors.py`
 
