@@ -778,12 +778,41 @@ With no argument, `jobs.py` starts a blocking scheduler.
 
 ## Where the money goes
 
-`observability.py` warns at 80% of `DAILY_TOKEN_LIMIT`. Watch the per-request
+`observability.py` warns at 80% of each provider's cap. Watch the per-request
 line:
 
 ```
-[OBS] <question> · 6 LLM · 0 tool · 18,712 tok · 118.1s · today 262,673/100,000
+[OBS] <question> · 6 LLM · 0 tool · 18,712 tok · 118.1s
+      · today groq 64,465/100,000 (64%) · gemini 4/20 req (90,480 tok)
 ```
+
+
+### A gauge that read 190%
+
+It used to be one counter against one number:
+
+```
+today 190,483/100,000 (190%)
+```
+
+The total was arithmetically correct — ten requests, and the metrics file
+reconciles to the byte. The *denominator* was wrong. `DAILY_TOKEN_LIMIT` is
+**Groq's** free-tier 100,000 TPD, but the counter added up every provider,
+including the Gemini calls the fallback makes — and the fallback runs
+*precisely* when Groq has run out. So the gauge was guaranteed to break 100% on
+any day the failover did its job, and the 80% warning fired off a mixed total
+that said nothing about which provider was actually close to empty.
+
+Usage is now attributed per model at `on_llm_end` and metered in the unit each
+provider bills in: Groq caps **tokens** per day, Gemini's free tier caps
+**requests** per day, per model. Each clause has its own denominator, so a
+percentage means something again and no gauge can pass 100% unless that
+provider's own allowance really was exceeded.
+
+An unrecognised model gets its own bucket rather than defaulting to Groq's —
+quietly charging a new model to the wrong budget is the bug this replaced.
+Files written before the change carry only a raw total; they load as
+`today 190,483 tok`, with no denominator, rather than inventing one.
 
 Six LLM calls for one question means the supervisor is over-delegating. The
 swing agent, by contrast, spends about 3,000 tokens a day: one analyst call over

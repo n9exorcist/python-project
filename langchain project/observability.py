@@ -46,9 +46,42 @@ LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
 METRICS_FILE = LOG_DIR / "metrics.jsonl"
 
-# Provider daily token cap (Groq free tier = 100,000 TPD). Warn at 80%.
+# Daily caps, PER PROVIDER, in the unit each provider actually meters.
+#
+# One counter measured against one provider's cap is how you get "190,483 /
+# 100,000 (190%)" -- a gauge reading 190% of a limit nothing enforced. The
+# 100,000 is Groq's free-tier TPD; the total included every Gemini call the
+# fallback made, and the fallback runs *precisely* when Groq has run out. So the
+# gauge was guaranteed to break 100% on any day the failover worked.
+#
+# Groq meters tokens per day. Gemini's free tier meters REQUESTS per day, per
+# model -- its token count is informational, not a budget. Showing each against
+# its own denominator is what makes a percentage mean something again.
 DAILY_TOKEN_LIMIT = int(os.getenv("DAILY_TOKEN_LIMIT", "100000"))
+GEMINI_DAILY_REQUESTS = int(os.getenv("GEMINI_DAILY_REQUESTS", "20"))
 WARN_AT = 0.80
+
+# Token-capped providers: name -> daily token allowance.
+TOKEN_CAPS = {"groq": DAILY_TOKEN_LIMIT}
+# Request-capped providers: name -> daily request allowance.
+REQUEST_CAPS = {"gemini": GEMINI_DAILY_REQUESTS}
+
+
+def _provider_of(model: str) -> str:
+    """Which budget a model's usage belongs to.
+
+    Substring matching on the model id, because that is all `llm_output` gives
+    us and it is stable enough: Groq serves gpt-oss / llama / qwen / kimi, and
+    Google's are all named gemini-*. Anything unrecognised gets its own bucket
+    rather than being silently charged to Groq -- an unknown model landing on
+    someone else's budget is the bug this function exists to prevent.
+    """
+    m = (model or "").lower()
+    if "gemini" in m:
+        return "gemini"
+    if any(k in m for k in ("gpt-oss", "llama", "qwen", "kimi", "moonshot", "groq")):
+        return "groq"
+    return m.split("/")[0] or "unknown"
 
 # Optional cost estimate: USD per 1M tokens (set to your plan's rate; 0 = skip).
 COST_PER_1M_TOKENS = float(os.getenv("COST_PER_1M_TOKENS", "0"))
@@ -89,6 +122,21 @@ class Observability(BaseCallbackHandler):
 
         self.llm_calls += 1
         out = getattr(response, "llm_output", None) or {}
+        model = out.get("model_name") or out.get("model") or ""
+        if not model:
+            # Newer LangChain puts it on the message instead of llm_output.
+            try:
+                for gen_list in response.generations:
+                    for gen in gen_list:
+                        meta = getattr(getattr(gen, "message", None),
+                                       "response_metadata", None) or {}
+                        model = meta.get("model_name") or meta.get("model") or ""
+                        if model:
+                            break
+                    if model:
+                        break
+            except Exception:
+                pass
         usage = out.get("token_usage") or out.get("usage") or {}
         pt = usage.get("prompt_tokens", 0) or 0
         ct = usage.get("completion_tokens", 0) or 0
@@ -106,7 +154,7 @@ class Observability(BaseCallbackHandler):
                 pass
         self.prompt_tokens += pt
         self.completion_tokens += ct
-        self._add_daily_tokens(pt + ct)
+        self._add_daily_tokens(pt + ct, _provider_of(model))
 
     # ---------------- tools ----------------
     def on_tool_start(self, serialized, input_str, **kwargs):
@@ -119,25 +167,77 @@ class Observability(BaseCallbackHandler):
     def _daily_file(self):
         return LOG_DIR / f"token_usage_{_today()}.json"
 
-    def _read_daily(self):
+    def _read_state(self):
+        """{"date", "tokens", "providers": {name: {"tokens", "requests"}}}.
+
+        Files written before this was per-provider carry only `tokens`; they load
+        with an empty providers map rather than being discarded, so a day already
+        in progress keeps its total.
+        """
         f = self._daily_file()
         if f.exists():
             try:
-                return json.loads(f.read_text()).get("tokens", 0)
+                d = json.loads(f.read_text())
+                return {"tokens": d.get("tokens", 0),
+                        "providers": d.get("providers", {})}
             except Exception:
-                return 0
-        return 0
+                pass
+        return {"tokens": 0, "providers": {}}
 
-    def _add_daily_tokens(self, n):
+    def _read_daily(self):
+        return self._read_state()["tokens"]
+
+    def _add_daily_tokens(self, n, provider="unknown"):
         if n <= 0:
             return
         with self._lock:
-            total = self._read_daily() + n
-            self._daily_file().write_text(json.dumps({"date": _today(), "tokens": total}))
-            frac = total / DAILY_TOKEN_LIMIT if DAILY_TOKEN_LIMIT else 0
-            if frac >= WARN_AT:
-                print(f"!!! [OBS] TOKEN BUDGET WARNING: {total:,}/{DAILY_TOKEN_LIMIT:,} "
-                      f"({frac:.0%}) used today -- approaching the daily cap.")
+            st = self._read_state()
+            st["tokens"] += n
+            p = st["providers"].setdefault(provider, {"tokens": 0, "requests": 0})
+            p["tokens"] += n
+            p["requests"] += 1
+            self._daily_file().write_text(json.dumps(
+                {"date": _today(), "tokens": st["tokens"], "providers": st["providers"]}))
+
+            # Warn against the cap that actually applies to THIS provider, in the
+            # unit it meters. A warning fired off the mixed total told you nothing
+            # about which provider was nearly out.
+            if provider in TOKEN_CAPS and TOKEN_CAPS[provider]:
+                cap = TOKEN_CAPS[provider]
+                frac = p["tokens"] / cap
+                if frac >= WARN_AT:
+                    print(f"!!! [OBS] {provider.upper()} TOKEN BUDGET: "
+                          f"{p['tokens']:,}/{cap:,} ({frac:.0%}) today.")
+            elif provider in REQUEST_CAPS and REQUEST_CAPS[provider]:
+                cap = REQUEST_CAPS[provider]
+                if p["requests"] / cap >= WARN_AT:
+                    print(f"!!! [OBS] {provider.upper()} REQUEST BUDGET: "
+                          f"{p['requests']}/{cap} calls today.")
+
+    def _budget_line(self):
+        """One clause per provider, each against its own denominator."""
+        st = self._read_state()
+        parts = []
+        # Token-capped first: that is the budget that actually runs out and
+        # sends traffic to the others, so it belongs at the front of the line.
+        def _rank(kv):
+            n = kv[0]
+            return (0 if n in TOKEN_CAPS else 1 if n in REQUEST_CAPS else 2, n)
+
+        for name, p in sorted(st["providers"].items(), key=_rank):
+            if name in TOKEN_CAPS and TOKEN_CAPS[name]:
+                cap = TOKEN_CAPS[name]
+                parts.append(f"{name} {p['tokens']:,}/{cap:,} ({p['tokens']/cap:.0%})")
+            elif name in REQUEST_CAPS and REQUEST_CAPS[name]:
+                parts.append(f"{name} {p['requests']}/{REQUEST_CAPS[name]} req "
+                             f"({p['tokens']:,} tok)")
+            else:
+                parts.append(f"{name} {p['tokens']:,} tok")
+        if not parts:
+            # Nothing attributed yet (or a pre-upgrade file): report the raw
+            # total without a denominator rather than inventing one.
+            return f"{st['tokens']:,} tok"
+        return " · ".join(parts)
 
     # ---------------- request lifecycle ----------------
     def begin_request(self):
@@ -171,10 +271,9 @@ class Observability(BaseCallbackHandler):
                 fh.write(json.dumps(rec) + "\n")
 
         cost_str = f" · ${cost:.4f}" if cost is not None else ""
-        pct = (daily / DAILY_TOKEN_LIMIT) if DAILY_TOKEN_LIMIT else 0
         print(f"[OBS] {label or 'request'} · {self.llm_calls} LLM · {self.tool_calls} tool "
               f"({self.tool_errors} err) · {total_tokens:,} tok · {elapsed:.1f}s{cost_str} "
-              f"· today {daily:,}/{DAILY_TOKEN_LIMIT:,} ({pct:.0%})")
+              f"· today {self._budget_line()}")
         return rec
 
 
