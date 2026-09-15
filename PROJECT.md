@@ -994,18 +994,31 @@ Open:
   alone — not the existing token, which has `contents: write`.
 - **The agent loop is waiting on evidence, not on code.** It runs every
   Saturday and currently reports which gate each finding is blocked by: 12 scan
-  days (has 3), 120 forward-return observations (has 0), 25 near-misses per
-  filter (has 0). The first forward returns land ten sessions after the first
-  scan under `scan_rejects`, so the earliest a finding can clear is late
-  September.
-- **JKPAPER is an accidental experiment.** It was filled on 2026-09-08 at 420.05
-  under the pre-gate rules, with a trigger 11 sessions stale and price already
-  past TP1. It is deliberately NOT being closed: it was a legitimate trade under
-  the rules in force when it was taken, and deleting positions because the rules
-  changed afterwards is exactly the retroactive edit that makes a paper log
-  worthless. `screen_version` exists so outcomes attribute to the rules that
-  produced them. It now sits alongside TITAGARH, which was taken on a same-day
-  trigger — a live measurement of what a stale trigger is actually worth.
+  days (has 8), 120 forward-return observations, 25 near-misses per filter.
+  `scan_rejects` now holds 230 rows. The first forward returns land ten sessions
+  after the first scan, so the earliest a finding can clear is late September —
+  and the market gate will slow that down, because a session the gate closes
+  produces no rejections to learn from.
+- **The first trade closed on 2026-09-15, at a full loss.** TITAGARH stopped at
+  812.84 for **−1.00R** — −₹7,448 in FIXED and −₹7,439 in STRUCTURAL, the two
+  books' stops being 8 paise apart, so they closed together. Entered 2026-09-07
+  on a same-day trigger and held six sessions. One trade is not evidence of
+  anything; it is recorded here because a log that only surfaces its winners is
+  worth nothing.
+- **It would not have been taken under the market gate.** NIFTY has been below
+  its own 5/13 trigger since the sell cross on 2026-08-17, so the gate was shut
+  for the whole life of that position — signal, entry and stop. That is one
+  observation, not a validation. A filter that would have avoided a single loss
+  has said nothing about what it costs on the trades it also removes, which is
+  why `market_regime` records the days it lets the screen through as well as the
+  days it blocks.
+- **JKPAPER is still the accidental experiment.** It was filled on 2026-09-08 at
+  420.05 under the pre-gate rules, with a trigger 11 sessions stale and price
+  already past TP1. It is deliberately NOT being closed: it was a legitimate
+  trade under the rules in force when it was taken, and deleting positions
+  because the rules changed afterwards is exactly the retroactive edit that makes
+  a paper log worthless. `screen_version` exists so outcomes attribute to the
+  rules that produced them.
 - **Expectancy needs roughly 30 closed trades** before it means anything. There
-  are currently 2 open and 0 closed. This gates the exit rules only; the screen
+  are currently 1 open and 1 closed. This gates the exit rules only; the screen
   is judged on forward returns instead.
