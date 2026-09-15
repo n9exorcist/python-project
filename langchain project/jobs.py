@@ -207,6 +207,13 @@ def record_run(job: str, session: str) -> None:
 # must never be the same message.
 FETCH_FAIL_ALERT = 0.34
 
+# How loudly the market gate reports itself.
+#   "change" — only when the index turns (default). A bearish stretch is weeks
+#              long; a daily "still bearish" is noise you learn to ignore.
+#   "daily"  — every gated session, the original behaviour.
+#   "never"  — silent. The 09:16 brief is then the only proof of life.
+GATE_NOTIFY = os.getenv("GATE_NOTIFY", "change")
+
 
 def _funnel_line(day: str, passed: int = 0) -> str:
     """One line naming how many symbols were screened and what rejected them.
@@ -289,15 +296,29 @@ def job_scan() -> None:
     # should cost nothing: no Moneycontrol resolve, no price fetches, no analyst
     # call.
     import market
-    may_screen, regime, why = market.check(today, db_path=DB_PATH)
+    may_screen, regime, why, changed = market.check(today, db_path=DB_PATH)
     if not may_screen:
         # Claim the session. Three spare slots re-deciding the same closed gate
         # would send the same message three times, and the point of the spare
         # slots is to cover a dropped run, not to repeat a completed one.
         record_run("scan", today)
-        notify(f"{today}: market gate CLOSED — no screen today.\n{why}\n"
-               f"Nothing is screened while the index is below its own trigger. "
-               f"Open positions are still marked and stopped as usual.")
+
+        # Announce the TURN, not the state. A bearish stretch runs for weeks --
+        # NIFTY has been below its trigger since 2026-08-17 -- and a daily
+        # "still bearish" message trains you to swipe the channel away, which is
+        # expensive on the morning it says something else.
+        #
+        # The safety that lost here has to be paid for elsewhere, and it is: the
+        # 09:16 brief still goes out every trading day, so a silent scan window
+        # never means a dead scheduler. Silence from BOTH is the alarm.
+        if GATE_NOTIFY == "daily" or (GATE_NOTIFY == "change" and changed):
+            notify(f"{today}: market gate CLOSED — screening suspended.\n{why}\n"
+                   f"No screen runs while the index is below its own trigger, and "
+                   f"you will not be messaged again until it turns. Open positions "
+                   f"are still marked and stopped as usual; the 09:16 brief "
+                   f"continues daily.")
+        else:
+            print(f"[scan] gate still closed, not re-announcing")
         print(f"[scan] market gate closed: {why}")
         return
     if regime is not None:
@@ -329,6 +350,8 @@ def job_scan() -> None:
             # the universe list failed to load. The size is the tell.
             sec = _sector_line()
             notify(f"{today}: no setups today.\n{_funnel_line(today)}"
+                   + ("\nMARKET GATE REOPENED — screening resumes."
+                      if regime is not None and changed else "")
                    + (f"\n{regime.line()}" if regime is not None else "")
                    + (f"\n{sec}" if sec else ""))
         return
@@ -343,6 +366,8 @@ def job_scan() -> None:
     # The screen's own numbers are the point; the analyst is commentary on top.
     lines = [f"SCAN {today} — {len(cands)} of {len(syms)} passed the screen"]
     if regime is not None:
+        if changed:
+            lines.append("MARKET GATE REOPENED — screening resumes.")
         lines.append(regime.line())
     sec = _sector_line()
     if sec:
@@ -619,6 +644,25 @@ def job_brief() -> None:
             "FROM signals WHERE scan_date=? ORDER BY symbol", (last,)
         ).fetchall() if last else []
         opens = _open_positions(con, session)
+
+        # Was the last session gated? A gated session still claims `scan` in
+        # job_runs -- the decision was made and the spare slots must not redo it
+        # -- but it writes no scan_stats, so the funnel would render
+        # "Screened 0 symbols" and read as a screen that swept nothing. That is
+        # a worse lie than the stale date this brief was already fixed for once.
+        gate = None
+        try:
+            con.execute("CREATE TABLE IF NOT EXISTS market_regime ("
+                        "session TEXT PRIMARY KEY, symbol TEXT, bar_date TEXT, "
+                        "close REAL, ema_fast REAL, ema_slow REAL, "
+                        "bullish INTEGER, gated INTEGER, last_cross_date TEXT, "
+                        "last_cross_side TEXT, recorded_at TEXT)")
+            gate = con.execute(
+                "SELECT symbol, close, ema_fast, ema_slow, last_cross_date "
+                "FROM market_regime WHERE session=? AND gated=1", (last,)
+            ).fetchone() if last else None
+        except Exception:
+            gate = None
     finally:
         con.close()
 
@@ -628,18 +672,29 @@ def job_brief() -> None:
         lines.append("LAST SCREEN: none yet.")
     else:
         lines.append(f"LAST SCREEN — {last} session")
-        lines.append(f"  {_funnel_line(last, len(cands))}")
-        if not cands:
+        if gate:
+            sym, close, ef, es, cross = gate
+            lines.append(f"  MARKET GATE CLOSED — no screen ran.")
+            lines.append(f"  {sym} {close:,.2f} · EMA5 {ef:,.2f} below EMA13 "
+                         f"{es:,.2f}"
+                         + (f" since the sell cross on {cross}" if cross else ""))
+        else:
+            lines.append(f"  {_funnel_line(last, len(cands))}")
+        if not cands and not gate:
             # Say it. An empty list under a funnel line is ambiguous between
-            # "nothing passed" and "the candidates failed to load".
+            # "nothing passed" and "the candidates failed to load". Skipped when
+            # the gate is shut: nothing passed because nothing was screened, and
+            # the line above already said so.
             lines.append("  nothing passed the screen.")
         for sym, close, rsi, vol, ext, verdict in cands:
             lines.append(f"  {(verdict or 'screened').upper():9s} {sym}")
             lines.append(f"            {close} · RSI {rsi} · vol x{vol} "
                          f"· {ext:+.1f}% vs 20EMA")
-        if last != session:
+        if last != session and not gate:
             # Says out loud that the screen is behind the market, rather than
-            # letting a stale date sit there looking current.
+            # letting a stale date sit there looking current. Not when the gate
+            # is shut -- "was not screened" is then the intended behaviour, not
+            # a warning, and the line above has already explained it.
             lines.append(f"  NOTE: {session} has closed and was not screened.")
 
     lines += ["", "AT TODAY'S OPEN"]

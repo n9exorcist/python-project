@@ -162,8 +162,27 @@ def save(con: sqlite3.Connection, session: str, r: Regime | None, gated: bool) -
     con.commit()
 
 
-def check(session: str, db_path: str | None = None) -> tuple[bool, Regime | None, str]:
-    """(may_screen, regime, why).
+def previous_bullish(db_path: str, session: str) -> bool | None:
+    """The last recorded state BEFORE this session. None if there is no history.
+
+    This is what turns a state into an event. Reporting the state every day is
+    what makes a filter that is doing its job indistinguishable from a broken
+    one -- after a fortnight of identical messages nobody reads the fifteenth.
+    """
+    con = sqlite3.connect(db_path)
+    try:
+        con.executescript(SCHEMA)
+        r = con.execute(
+            "SELECT bullish FROM market_regime WHERE session < ? "
+            "ORDER BY session DESC LIMIT 1", (session,)
+        ).fetchone()
+        return bool(r[0]) if r else None
+    finally:
+        con.close()
+
+
+def check(session: str, db_path: str | None = None) -> tuple[bool, Regime | None, str, bool]:
+    """(may_screen, regime, why, changed).
 
     A fetch failure opens the gate rather than closing it. The alternative is a
     Yahoo outage silently suspending the strategy, with 'no setups today' as the
@@ -171,13 +190,18 @@ def check(session: str, db_path: str | None = None) -> tuple[bool, Regime | None
     no gate, because it looks identical to a calm market.
     """
     if not REQUIRE_MARKET_UPTREND:
-        return True, None, "market gate off"
+        return True, None, "market gate off", False
 
     df = fetch()
     r = read(df) if df is not None else None
     if r is None:
         return True, None, (f"{MARKET_SYMBOL} unavailable — screening anyway "
-                            f"rather than going quiet on a data failure")
+                            f"rather than going quiet on a data failure"), False
+
+    # Read the previous state BEFORE writing this one, or every day looks like
+    # a change.
+    prev = previous_bullish(db_path, session) if db_path else None
+    changed = prev is None or prev != r.bullish
 
     if db_path:
         con = sqlite3.connect(db_path)
@@ -186,4 +210,4 @@ def check(session: str, db_path: str | None = None) -> tuple[bool, Regime | None
         finally:
             con.close()
 
-    return r.bullish, r, r.line()
+    return r.bullish, r, r.line(), changed
