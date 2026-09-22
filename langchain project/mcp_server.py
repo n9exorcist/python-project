@@ -51,7 +51,29 @@ if FAISS_PATH:
     retriever = vector_db.as_retriever(search_kwargs={"k": 5})
 else:
     print(f"--- WARNING: FAISS index not found in {_faiss_candidates} ---")
+    vector_db = None
     retriever = None
+
+# A nearest neighbour is not the same thing as a relevant one. FAISS always
+# returns k results, however far away they are, so "top 5" used to mean "the
+# five least-irrelevant chunks" -- and the writer was then handed them as
+# context. L2 distances measured on this index with gemini-embedding-001:
+#
+#     relevant queries, best hit     0.332 - 0.487
+#     irrelevant queries, best hit   0.862 - 0.922   (chocolate cake, car tyre)
+#     padding inside relevant ones   0.751 - 0.816   ("gold silver safe haven"
+#                                                     kept 1 real chunk and 4
+#                                                     of this)
+#
+# 0.65 sits in the empty band between the two populations. Past it a chunk is
+# dropped, and a query with nothing under it returns "No local records found."
+# -- which graph.py already treats as a weak result -- instead of five
+# confident-looking irrelevancies for the writer to build an answer from.
+#
+# Re-measure if the embedding model or the corpus changes: distances are only
+# comparable within one model, and a threshold tuned on 68 vectors is a
+# starting point for 68,000, not a conclusion.
+RETRIEVAL_MAX_DISTANCE = float(os.getenv("RETRIEVAL_MAX_DISTANCE", "0.65"))
 
 
 # --- CSV SIGNAL TOOL ---
@@ -148,12 +170,31 @@ def mcp_get_trade_history(date: str = "today") -> str:
         return f"Database Query Error: {str(e)}"
 
 
+MARKET_CYCLES = (
+    "Defense sectors thrive under robotic advancement; Gold/Silver remain safe havens. "
+    "Observe the current ratio for Gold-Silver for reversal signs."
+)
+
+
 @mcp.resource("market://cycles")
 def get_market_cycles() -> str:
-    return (
-        "Defense sectors thrive under robotic advancement; Gold/Silver remain safe havens. "
-        "Observe the current ratio for Gold-Silver for reversal signs."
-    )
+    return MARKET_CYCLES
+
+
+@mcp.tool()
+def mcp_read_market_cycles() -> str:
+    """
+    Read the Market Cycles note: the house view on the Gold-Silver ratio, safe-haven
+    assets, and the defense sector. Use this whenever the user mentions market
+    cycles, the Gold-Silver ratio, or asks what the market cycle says about a sector.
+    """
+    # The same text as the market://cycles RESOURCE above -- exposed as a tool
+    # because the graph can only reach tools. langchain-mcp-adapters' get_tools()
+    # surfaces @mcp.tool functions and nothing else, so the resource has been
+    # unreachable since it was written: asked "Read the Market Cycles resource",
+    # the researcher could only search FAISS and piece together two nearby notes.
+    # One source of truth, two doors.
+    return f"[market://cycles]\n{MARKET_CYCLES}"
 
 
 # --- CORPORATE RECORDS (RAG) TOOL ---
@@ -205,7 +246,12 @@ def mcp_search_corporate_records(query: str) -> str:
     if not retriever:
         return "Error: Local FAISS index not found."
     try:
-        docs = retriever.invoke(query)
+        scored = vector_db.similarity_search_with_score(query, k=5)
+        docs = [d for d, dist in scored if dist <= RETRIEVAL_MAX_DISTANCE]
+        dropped = len(scored) - len(docs)
+        if dropped:
+            print(f"--- [RAG] {query[:40]!r}: kept {len(docs)}, dropped {dropped} "
+                  f"beyond distance {RETRIEVAL_MAX_DISTANCE} ---")
         if not docs:
             return "No local records found."
         # Provenance is preserved here. The previous version returned page_content

@@ -154,8 +154,24 @@ class Observability(BaseCallbackHandler):
         self.tool_errors = 0
         self.prompt_tokens = 0
         self.completion_tokens = 0
+        # Tokens by LangGraph node. The request total says HOW MUCH; this says
+        # WHERE -- and "where" is the only question a cost fix can start from.
+        # Routing was measured at ~12% of a request by hand; everything else was
+        # an undifferentiated 88% until this existed.
+        self.by_node = {}
+        self._node_of = {}
 
     # ---------------- LLM ----------------
+    def on_chat_model_start(self, serialized, messages, *, run_id=None,
+                            metadata=None, **kwargs):
+        # LangGraph stamps every runnable inside a node with `langgraph_node`, and
+        # a chat model called from that node inherits it. Remember it by run_id,
+        # because on_llm_end -- where the token counts arrive -- is not given the
+        # metadata.
+        node = (metadata or {}).get("langgraph_node")
+        if run_id is not None and node:
+            self._node_of[run_id] = node
+
     def on_llm_end(self, response, **kwargs):
         # This handler is attached BOTH to the ChatGroq object (so Studio / eval
         # traffic counts toward the daily total) and to the graph config (so tool
@@ -205,6 +221,8 @@ class Observability(BaseCallbackHandler):
         self.prompt_tokens += pt
         self.completion_tokens += ct
         self._add_daily_tokens(pt + ct, _provider_of(model))
+        node = self._node_of.pop(run_id, None) or "other"
+        self.by_node[node] = self.by_node.get(node, 0) + pt + ct
 
     # ---------------- tools ----------------
     def on_tool_start(self, serialized, input_str, **kwargs):
@@ -312,6 +330,7 @@ class Observability(BaseCallbackHandler):
             "total_tokens": total_tokens,
             "latency_s": round(elapsed, 2),
             "daily_tokens": daily,
+            "by_node": dict(sorted(self.by_node.items(), key=lambda kv: -kv[1])),
         }
         if cost is not None:
             rec["est_cost_usd"] = round(cost, 5)
@@ -324,6 +343,10 @@ class Observability(BaseCallbackHandler):
         print(f"[OBS] {label or 'request'} · {self.llm_calls} LLM · {self.tool_calls} tool "
               f"({self.tool_errors} err) · {total_tokens:,} tok · {elapsed:.1f}s{cost_str} "
               f"· today {self._budget_line()}")
+        if self.by_node and total_tokens:
+            top = sorted(self.by_node.items(), key=lambda kv: -kv[1])
+            print("      by node: " + " · ".join(
+                f"{n} {t:,} ({t / total_tokens:.0%})" for n, t in top))
         return rec
 
 

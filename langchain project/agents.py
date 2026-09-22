@@ -157,6 +157,80 @@ def _latest_question(messages):
     return ""
 
 
+def _reviewer_evidence(messages) -> tuple[str, int, int]:
+    """The evidence the reflect reviewer judges an answer against.
+
+    Returns (evidence_text, results_this_turn, results_from_earlier_turns).
+    Pure, so it can be checked against stored checkpoints -- which is how both
+    of its previous failures were found, and how they are now pinned down.
+    """
+    msgs = list(messages)
+    turn_start = 0
+    for i in range(len(msgs) - 1, -1, -1):
+        if getattr(msgs[i], "type", "") == "human":
+            turn_start = i
+            break
+
+    this_turn: list[str] = []
+    for m in msgs[turn_start:]:
+        if getattr(m, "type", "") != "tool":
+            continue
+        c = m.content if isinstance(m.content, str) else str(m.content)
+        if c:
+            this_turn.append(c)
+
+    def _budgeted(items: list[str], budget: int) -> list[str]:
+        if not items:
+            return []
+        share = max(MIN_EVIDENCE_CHARS, budget // len(items))
+        out, spent = [], 0
+        for c in items:
+            if spent + min(len(c), share) > budget and out:
+                break
+            piece = c if len(c) <= share else c[:share] + "\n...[truncated]"
+            out.append(piece)
+            spent += len(piece)
+        return out
+
+    # ...and then what EARLIER turns retrieved, in a budget of its own.
+    #
+    # Scoping to this turn alone fixed the crowd-out and opened the opposite
+    # hole. The writer sees the whole trimmed history, so a follow-up is
+    # legitimately answered from an earlier turn's retrieval -- and the
+    # reviewer, shown only this turn, was judging blind again. Measured on
+    # the stored thread: "Tell me about Accenture Q2 2026" ran ZERO tools
+    # and was answered from 8 earlier results, the $18.04bn revenue among
+    # them. The reviewer saw nothing and fell into the "no tool returned
+    # anything" branch, which passes a refusal and has no rule at all for a
+    # table full of figures.
+    #
+    # Two budgets, not one, is what stops this undoing the last fix: the
+    # current turn can never again be pushed out by history, because
+    # history is only ever spent from its own allowance. Newest first,
+    # because a follow-up usually leans on the turn just before it.
+    earlier: list[str] = []
+    for m in msgs[:turn_start]:
+        if getattr(m, "type", "") != "tool":
+            continue
+        c = m.content if isinstance(m.content, str) else str(m.content)
+        if c:
+            earlier.append(c)
+    earlier.reverse()
+
+    now_part = _budgeted(this_turn, MAX_TOOL_CHARS)
+    then_part = _budgeted(earlier, MAX_TOOL_CHARS)
+
+    sections = []
+    if now_part:
+        sections.append("RETRIEVED THIS TURN:\n" + "\n---\n".join(now_part))
+    if then_part:
+        sections.append("RETRIEVED EARLIER IN THIS CONVERSATION (the assistant "
+                        "may legitimately answer a follow-up from this):\n"
+                        + "\n---\n".join(then_part))
+    evidence = "\n\n".join(sections)
+    return evidence, len(now_part), len(then_part)
+
+
 def make_entry_node(llm, use_llm_guard):
     """Input guardrail + per-request counter reset.
 
@@ -192,7 +266,7 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
     def subset(names):
         return [tools_map[n] for n in names if n in tools_map]
 
-    researcher_tools = subset(["mcp_search_corporate_records"])
+    researcher_tools = subset(["mcp_search_corporate_records", "mcp_read_market_cycles"])
     web_tools = subset(["mcp_search_the_web"])
     trading_tools = subset(["mcp_read_signals_csv", "mcp_get_trade_history"])
 
@@ -325,7 +399,9 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
 
     researcher_node = make_specialist(
         "researcher", llm_researcher,
-        "You look up internal corporate records, company financials, and knowledge-base notes.",
+        "You look up internal corporate records, company financials, and knowledge-base notes. "
+        "For market cycles, the Gold-Silver ratio, or the house view on a sector, read the "
+        "Market Cycles note directly rather than searching for it.",
         tool_names=[t.name for t in researcher_tools])
     web_node = make_specialist(
         "web", llm_web,
@@ -401,8 +477,9 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
         # A reviewer that cannot see the evidence cannot tell "nothing was
         # found" from "something was found and dropped", which is the only
         # distinction that matters here.
-        # ...but only THIS turn's, and not the first 4,000 characters of every
-        # turn's.
+        # ...THIS turn's first, and never the first 4,000 characters of every
+        # turn's. (Earlier turns follow in a budget of their own -- see
+        # _reviewer_evidence for the follow-up case that made that necessary.)
         #
         # `state["messages"]` is checkpointed per THREAD, so it holds every tool
         # result the conversation has ever produced. Joining all of them and
@@ -429,35 +506,12 @@ def build_supervisor_graph(llm, mcp_tools, checkpointer, use_llm_guard: bool = F
         # over the join, so no single large result can crowd the others out of
         # the window. Tool output front-loads its useful content, so each share
         # keeps its head.
-        msgs = state.get("messages", [])
-        turn_start = 0
-        for i in range(len(msgs) - 1, -1, -1):
-            if getattr(msgs[i], "type", "") == "human":
-                turn_start = i
-                break
-
-        this_turn: list[str] = []
-        for m in msgs[turn_start:]:
-            if getattr(m, "type", "") != "tool":
-                continue
-            c = m.content if isinstance(m.content, str) else str(m.content)
-            if c:
-                this_turn.append(c)
-
-        if this_turn:
-            share = max(MIN_EVIDENCE_CHARS, MAX_TOOL_CHARS // len(this_turn))
-            retrieved = [
-                c if len(c) <= share else c[:share] + "\n...[truncated]"
-                for c in this_turn
-            ]
-        else:
-            retrieved = []
-        evidence = "\n---\n".join(retrieved)
+        evidence, n_now, n_then = _reviewer_evidence(state.get("messages", []))
         # Say what the reviewer is judging on. When a verdict goes wrong the
         # first question is always "what did it actually see", and on the day
         # it did go wrong that was not answerable from the logs.
-        print(f"--- [REFLECT] evidence: {len(this_turn)} tool result(s) this "
-              f"turn, {len(evidence):,} chars ---")
+        print(f"--- [REFLECT] evidence: {n_now} result(s) this turn + "
+              f"{n_then} earlier, {len(evidence):,} chars ---")
 
         sys = (
             "You are a strict reviewer. Given the user's QUESTION, the RETRIEVED "
