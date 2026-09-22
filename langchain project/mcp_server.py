@@ -67,8 +67,10 @@ else:
 #
 # 0.65 sits in the empty band between the two populations. Past it a chunk is
 # dropped, and a query with nothing under it returns "No local records found."
-# -- which graph.py already treats as a weak result -- instead of five
-# confident-looking irrelevancies for the writer to build an answer from.
+# instead of five confident-looking irrelevancies for the writer to build an
+# answer from. The live graph (agents.py) has no retry-on-weak-retrieval step --
+# graph.py does, but nothing imports it -- so what handles this string is the
+# writer's instruction to say what is missing rather than invent it.
 #
 # Re-measure if the embedding model or the corpus changes: distances are only
 # comparable within one model, and a threshold tuned on 68 vectors is a
