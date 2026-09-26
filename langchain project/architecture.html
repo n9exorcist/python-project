@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f1117; color: #e8eaf0; font-size: 11px; padding: 16px; min-width: 1100px; }
+
+  .page-title { font-size: 20px; font-weight: 700; color: #ffffff; margin-bottom: 4px; }
+  .page-sub { font-size: 11px; color: #9ca3af; margin-bottom: 16px; }
+
+  .section { border-radius: 10px; padding: 10px 12px 12px; margin-bottom: 12px; }
+  .section-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+
+  .sec-users { border: 2px solid #14b8a6; background: #0d1f1e; }
+  .sec-users .section-label { color: #14b8a6; }
+
+  .sec-app { border: 2px solid #6366f1; background: #0f1130; }
+  .sec-app .section-label { color: #a5b4fc; }
+
+  .sec-ai { border: 2px solid #f59e0b; background: #1a1100; }
+  .sec-ai .section-label { color: #fbbf24; }
+
+  .sec-build { border: 2px solid #6b7280; background: #111318; }
+  .sec-build .section-label { color: #9ca3af; }
+
+  .row { display: flex; gap: 10px; align-items: stretch; }
+
+  .card { border-radius: 7px; padding: 9px 11px; flex: 1; min-width: 0; }
+  .card-title { font-size: 11.5px; font-weight: 700; margin-bottom: 5px; }
+  .card ul { list-style: none; padding: 0; }
+  .card ul li { font-size: 10px; color: #c9d0e0; line-height: 1.55; padding-left: 8px; position: relative; }
+  .card ul li::before { content: "•"; position: absolute; left: 0; color: #6b7280; }
+
+  .c-teal   { border: 1.5px solid #14b8a6; background: #062020; }
+  .c-teal   .card-title { color: #2dd4bf; }
+  .c-blue   { border: 1.5px solid #6366f1; background: #10123a; }
+  .c-blue   .card-title { color: #a5b4fc; }
+  .c-violet { border: 1.5px solid #8b5cf6; background: #150d30; }
+  .c-violet .card-title { color: #c4b5fd; }
+  .c-green  { border: 1.5px solid #22c55e; background: #031a0c; }
+  .c-green  .card-title { color: #4ade80; }
+  .c-orange { border: 1.5px solid #f59e0b; background: #1c1200; }
+  .c-orange .card-title { color: #fbbf24; }
+  .c-slate  { border: 1.5px solid #6b7280; background: #111418; }
+  .c-slate  .card-title { color: #d1d5db; }
+  .c-sky    { border: 1.5px solid #0ea5e9; background: #061520; }
+  .c-sky    .card-title { color: #38bdf8; }
+
+  .spacer { width: 10px; flex-shrink: 0; }
+
+  .agent-graph { border: 1.5px dashed #4f46e5; border-radius: 7px; padding: 8px 10px; background: #090c2a; flex: 2; }
+  .agent-graph .card-title { color: #818cf8; font-size: 11.5px; font-weight: 700; margin-bottom: 6px; }
+  .flow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+  .node { background: #1e1b4b; border: 1px solid #4f46e5; border-radius: 4px; padding: 2px 7px; font-size: 9.5px; color: #c7d2fe; white-space: nowrap; }
+  .node.guard  { border-color: #ef4444; color: #fca5a5; background: #1c0606; }
+  .node.writer { border-color: #22c55e; color: #86efac; background: #031a0c; }
+  .node.reflect{ border-color: #f59e0b; color: #fde68a; background: #1c1200; }
+  .node.tool   { border-color: #0ea5e9; color: #7dd3fc; background: #061520; }
+  .arrow { color: #6366f1; font-size: 12px; font-weight: 700; }
+  .branch { font-size: 9px; color: #6b7280; margin-left: 4px; }
+  .sub-flow { display: flex; gap: 4px; align-items: center; margin-left: 12px; margin-bottom: 3px; }
+
+  .divider { border: none; border-top: 1px solid #1f2937; margin: 8px 0; }
+
+  .inter-arrow { text-align: center; font-size: 14px; color: #4b5563; margin: -4px 0; }
+
+  .footer { font-size: 9px; color: #6b7280; margin-top: 10px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="page-title">Market Analyst Agent — Solution Architecture</div>
+<div class="page-sub">Local · verified 25 Sep 2026 &nbsp;|&nbsp; Python · LangGraph · FastAPI · MCP · FAISS · Groq · Gemini</div>
+
+<!-- USERS & ACCESS -->
+<div class="section sec-users">
+  <div class="section-label">Users &amp; Access</div>
+  <div class="row">
+    <div class="card c-teal">
+      <div class="card-title">User / Analyst</div>
+      <ul>
+        <li>Browser chat UI (localhost:3000)</li>
+        <li>Types questions, reads streamed answers</li>
+        <li>Downloads eval reports from evals/results/</li>
+      </ul>
+    </div>
+    <div class="card c-teal">
+      <div class="card-title">API Keys (.env)</div>
+      <ul>
+        <li>GROQ_API_KEY — primary LLM</li>
+        <li>SWING_GEMINI_API_KEY — embeddings + judge</li>
+        <li>TAVILY_API_KEY — live web search</li>
+        <li>TELEGRAM_* — HITL trade approval</li>
+      </ul>
+    </div>
+    <div class="card c-teal">
+      <div class="card-title">Telegram Bot (HITL)</div>
+      <ul>
+        <li>Sends trade proposal at 09:15 IST</li>
+        <li>Waits for Approve / Reject reply</li>
+        <li>Notifies outcome after execution</li>
+      </ul>
+    </div>
+    <div class="card c-teal">
+      <div class="card-title">Outputs</div>
+      <ul>
+        <li>Streamed chat answers (SSE)</li>
+        <li>Trading signals (signals.csv)</li>
+        <li>Eval reports (JSON scorecards)</li>
+        <li>Observability logs (JSONL)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="inter-arrow">↓ &nbsp; REST / SSE / WebSocket &nbsp; ↓</div>
+
+<!-- APPLICATION -->
+<div class="section sec-app">
+  <div class="section-label">Application — local Python processes</div>
+
+  <!-- Row 1: all service cards side by side -->
+  <div class="row" style="margin-bottom:10px;">
+    <div class="card c-blue">
+      <div class="card-title">Frontend (React)</div>
+      <ul>
+        <li>localhost:3000</li>
+        <li>Chat input / streamed output</li>
+        <li>CORS allowed by FastAPI</li>
+        <li>~32k lines, 131 components</li>
+        <li>Swing dashboard tab</li>
+      </ul>
+    </div>
+    <div class="card c-blue">
+      <div class="card-title">Backend API (FastAPI)</div>
+      <ul>
+        <li>uvicorn · port 8001</li>
+        <li>POST /chat/stream — SSE answer stream</li>
+        <li>GET /chat/history — conversation log</li>
+        <li>GET /chat/debug_state — tool contexts</li>
+        <li>GET /swing/* — scanner read endpoints</li>
+        <li>Lifespan: init DB → build graph → yield</li>
+        <li>APScheduler: daily_trade_job 09:15 IST</li>
+      </ul>
+    </div>
+    <div class="card c-violet">
+      <div class="card-title">MCP Server (FastMCP)</div>
+      <ul>
+        <li>port 8000 · SSE transport</li>
+        <li>mcp_read_signals_csv — Green/Red candle</li>
+        <li>mcp_get_trade_history — memory.db query</li>
+        <li>mcp_read_market_cycles — house view text</li>
+        <li>mcp_search_corporate_records — FAISS RAG</li>
+        <li>mcp_search_the_web — Tavily live search</li>
+      </ul>
+    </div>
+    <div class="card c-orange">
+      <div class="card-title">Trading Engine</div>
+      <ul>
+        <li>scanner.py — Nifty 500 screener</li>
+        <li>RSI · vol ratio · EMA filter checks</li>
+        <li>rules.py — tighten-only constitution</li>
+        <li>eval.py — Observe → Eval → Plan → Act</li>
+        <li>Forward returns (10-session horizon)</li>
+        <li>ICICI Breeze broker adapter</li>
+        <li>Paper positions tracked in SQLite</li>
+      </ul>
+    </div>
+    <div class="card c-green">
+      <div class="card-title">Observability</div>
+      <ul>
+        <li>BaseCallbackHandler (LangChain)</li>
+        <li>Per-node token breakdown</li>
+        <li>latency · llm_calls · tool_errors</li>
+        <li>logs/metrics.jsonl (per request)</li>
+        <li>logs/token_usage_DATE.json</li>
+        <li>Budget guard: Groq 200k TPD</li>
+        <li>Gemini 20 req/day cap · warns at 80%</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Row 2: Agent Graph full width -->
+  <div class="agent-graph" style="flex:none;">
+    <div class="card-title">Multi-Agent Supervisor Graph (LangGraph · agents.py)</div>
+    <div style="display:flex;gap:0;align-items:flex-start;">
+
+      <!-- Flow column -->
+      <div style="flex:1.2;padding-right:16px;border-right:1px solid #1f2937;">
+        <div style="font-size:9px;color:#6b7280;margin-bottom:4px;font-weight:600;">GRAPH FLOW</div>
+        <div class="flow">
+          <div class="node" style="border-color:#6b7280;color:#d1d5db;background:#111418;">START</div>
+          <div class="arrow">→</div>
+          <div class="node guard">input_guard</div>
+          <div class="arrow">→</div>
+          <div class="node">supervisor</div>
+        </div>
+        <div style="font-size:9px;color:#6b7280;margin:5px 0 3px 8px;">↓ routes to one specialist per turn</div>
+        <div class="sub-flow">
+          <div class="node">researcher</div><div class="arrow">→</div><div class="node tool">mcp_search_corporate_records</div><div class="arrow" style="color:#4b5563;">→</div><div class="node">supervisor</div>
+        </div>
+        <div class="sub-flow">
+          <div class="node">web</div><div class="arrow">→</div><div class="node tool">mcp_search_the_web</div><div class="arrow" style="color:#4b5563;">→</div><div class="node">supervisor</div>
+        </div>
+        <div class="sub-flow" style="margin-bottom:5px;">
+          <div class="node">trading</div><div class="arrow">→</div><div class="node tool">signals_csv · trade_history</div><div class="arrow" style="color:#4b5563;">→</div><div class="node">supervisor</div>
+        </div>
+        <div style="font-size:9px;color:#6b7280;margin:3px 0 3px 8px;">↓ supervisor → writer when done</div>
+        <div class="flow">
+          <div class="node writer">writer</div>
+          <div class="arrow">→</div>
+          <div class="node reflect">reflect</div>
+          <div class="arrow">→</div>
+          <div class="node" style="border-color:#14b8a6;color:#5eead4;background:#062020;">END / SSE stream</div>
+        </div>
+      </div>
+
+      <!-- Detail columns -->
+      <div style="flex:1;padding:0 14px;border-right:1px solid #1f2937;">
+        <div style="font-size:9px;color:#ef4444;font-weight:700;margin-bottom:4px;">input_guard</div>
+        <div style="font-size:9px;color:#9ca3af;line-height:1.65;">
+          Prompt injection detection<br/>
+          Secret / API key exfiltration<br/>
+          PII leak attempts<br/>
+          Keyword + optional LLM layer<br/>
+          Blocked → straight to END
+        </div>
+      </div>
+
+      <div style="flex:1;padding:0 14px;border-right:1px solid #1f2937;">
+        <div style="font-size:9px;color:#818cf8;font-weight:700;margin-bottom:4px;">GraphState (TypedDict)</div>
+        <div style="font-size:9px;color:#9ca3af;line-height:1.65;">
+          messages · next_agent<br/>
+          active_agent · delegations<br/>
+          tool_rounds · final_answer<br/>
+          reflection · reflect_attempts<br/>
+          blocked · guardrail_reason
+        </div>
+      </div>
+
+      <div style="flex:1;padding:0 14px;border-right:1px solid #1f2937;">
+        <div style="font-size:9px;color:#fbbf24;font-weight:700;margin-bottom:4px;">reflect node</div>
+        <div style="font-size:9px;color:#9ca3af;line-height:1.65;">
+          Critiques writer's draft<br/>
+          Two-budget evidence review<br/>
+          Weak answer → supervisor<br/>
+          MAX_REFLECT = 1 pass<br/>
+          Output guardrail on writer
+        </div>
+      </div>
+
+      <div style="flex:0.8;padding-left:14px;">
+        <div style="font-size:9px;color:#818cf8;font-weight:700;margin-bottom:4px;">Limits &amp; Memory</div>
+        <div style="font-size:9px;color:#9ca3af;line-height:1.65;">
+          MAX_DELEGATIONS = 4<br/>
+          MAX_TOOL_ROUNDS = 2<br/>
+          MAX_REFLECT = 1<br/>
+          MAX_CONTEXT = 5,000 tok<br/>
+          AsyncSqliteSaver (memory.db)
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="inter-arrow">↓ &nbsp; private API calls &nbsp; ↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↑ reads ↑</div>
+
+<!-- AI & DATA SERVICES -->
+<div class="section sec-ai">
+  <div class="section-label">AI &amp; Data Services</div>
+  <div class="row">
+    <div class="card c-orange" style="flex:1.2;">
+      <div class="card-title">Groq API</div>
+      <ul>
+        <li>openai/gpt-oss-120b — primary chat LLM</li>
+        <li>Supervisor, writer, reflect, guard nodes</li>
+        <li>run_evals.py judge (LLM-as-judge)</li>
+        <li>Free tier: 200,000 TPD</li>
+        <li>Fallback: llama / qwen / kimi models</li>
+      </ul>
+    </div>
+    <div class="card c-green" style="flex:1.2;">
+      <div class="card-title">Google Gemini API</div>
+      <ul>
+        <li>gemini-embedding-001 — FAISS embeddings</li>
+        <li>models/gemini-embedding-001 (1536-dim)</li>
+        <li>gemini-3.6-flash — rag_eval.py judge</li>
+        <li>gemini-3.5-flash-lite — RAGAS judge</li>
+        <li>Free tier: 20 req/day per model</li>
+      </ul>
+    </div>
+    <div class="card c-sky" style="flex:0.9;">
+      <div class="card-title">Tavily Search API</div>
+      <ul>
+        <li>mcp_search_the_web tool</li>
+        <li>Async live web search</li>
+        <li>Used by web-specialist node</li>
+        <li>News, market data, current events</li>
+      </ul>
+    </div>
+    <div class="card c-violet" style="flex:1.1;">
+      <div class="card-title">FAISS Vector Store</div>
+      <ul>
+        <li>faiss_index/ — local disk, L2 distance</li>
+        <li>67 chunks (PDFs + manual KB)</li>
+        <li>Threshold: 0.65 (relevant &lt; 0.49)</li>
+        <li>Provenance: source · doc_version · ingested_at</li>
+        <li>STALE flag after 90 days</li>
+        <li>Rebuilt by ingest.py on data change</li>
+      </ul>
+    </div>
+    <div class="card c-slate" style="flex:1.2;">
+      <div class="card-title">SQLite (memory.db)</div>
+      <ul>
+        <li>LangGraph checkpointer — full chat history</li>
+        <li>trade_history — executed positions</li>
+        <li>signals — scanner pass records</li>
+        <li>scan_rejects — rejected with reason</li>
+        <li>forward_returns — 10-session returns</li>
+        <li>paper_positions — paper book</li>
+        <li>eval_findings — loop findings log</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="inter-arrow">↓</div>
+
+<!-- EVALUATION & OPERATIONS -->
+<div class="section sec-build">
+  <div class="section-label">Evaluation &amp; Operations</div>
+  <div class="row">
+    <div class="card c-slate">
+      <div class="card-title">run_evals.py</div>
+      <ul>
+        <li>Groq judge (LLM-as-judge)</li>
+        <li>20 cases, all categories</li>
+        <li>Faithfulness + Relevance (1–5)</li>
+        <li>Tool-match check per case</li>
+        <li>evals/results/run_*.json</li>
+      </ul>
+    </div>
+    <div class="card c-slate">
+      <div class="card-title">run_ragas.py</div>
+      <ul>
+        <li>RAGAS library + Gemini judge</li>
+        <li>8 retrieval + faithfulness_trap cases</li>
+        <li>Faithfulness / Context Recall (0–1)</li>
+        <li>Reads /chat/debug_state for contexts</li>
+        <li>--rescore to re-judge saved answers</li>
+      </ul>
+    </div>
+    <div class="card c-slate">
+      <div class="card-title">rag_eval.py</div>
+      <ul>
+        <li>Manual metrics (no RAGAS dependency)</li>
+        <li>Precision@K · Recall@K · MRR · Hit Rate</li>
+        <li>Faithfulness · Answer Relevancy</li>
+        <li>Context Precision · Context Recall</li>
+        <li>logs/rag_eval_*.json</li>
+      </ul>
+    </div>
+    <div class="card c-slate">
+      <div class="card-title">eval.py (Trading)</div>
+      <ul>
+        <li>Observe → Eval → Plan → Act loop</li>
+        <li>Forward returns vs scanner edge</li>
+        <li>Auto-tightens thresholds (rules.py)</li>
+        <li>Gate: MIN_OBS_EDGE=120 before acting</li>
+        <li>eval_findings table in SQLite</li>
+      </ul>
+    </div>
+    <div class="card c-slate">
+      <div class="card-title">Scheduler &amp; Broker</div>
+      <ul>
+        <li>APScheduler: 09:15 IST Mon–Fri</li>
+        <li>scanner.py → top picks → proposal</li>
+        <li>Telegram HITL: approve/reject</li>
+        <li>ICICI Breeze API on approval</li>
+        <li>swing_routes.py read endpoints</li>
+      </ul>
+    </div>
+    <div class="card c-slate">
+      <div class="card-title">Observability Outputs</div>
+      <ul>
+        <li>logs/metrics.jsonl — per request JSONL</li>
+        <li>logs/token_usage_DATE.json — daily totals</li>
+        <li>logs/provider_caps.json — learned 429 caps</li>
+        <li>Warns at 80% of daily budget</li>
+        <li>Per-node token breakdown in console</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  Private networking: all services on localhost &nbsp;|&nbsp; No public endpoints &nbsp;|&nbsp;
+  LangGraph Studio compatible (studio_graph.py) &nbsp;|&nbsp; Resource: local Windows 11 dev machine
+</div>
+
+</body>
+</html>

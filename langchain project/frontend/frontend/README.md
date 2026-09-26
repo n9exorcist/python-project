@@ -185,7 +185,7 @@ cd "C:\Users\narayanan.selvaraj\python project\langchain project"
 .\venv\Scripts\activate
 python evals\run_ragas.py
 python evals\run_evals.py --category safety --sleep 3
-
+ PS C:\Users\narayanan.selvaraj\python project\langchain project> python rag_eval.py
 Example Prompts
 Try these in the UI or Studio:
 
