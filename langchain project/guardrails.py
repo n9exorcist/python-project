@@ -20,6 +20,11 @@ import os
 import re
 
 from langchain_core.messages import AIMessage
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+_presidio_analyzer = AnalyzerEngine()
+_presidio_anonymizer = AnonymizerEngine()
 
 # ---------------------------------------------------------------------------
 # INPUT-side patterns: instruction override + secret exfiltration
@@ -144,17 +149,27 @@ def scan_output(text: str, redact_phone: bool = False):
     if findings:
         return SAFE_REFUSAL_OUTPUT, True, findings
 
-    # 4) PII (inline redaction, lower severity)
+    # 4) PII — Presidio detects 20+ entity types (names, phones, email, credit
+    #    cards, Aadhaar, PAN, SSN, …) and redacts them inline.
     modified = False
     sanitized = text
-    if EMAIL_RE.search(sanitized):
-        sanitized = EMAIL_RE.sub("[EMAIL REDACTED]", sanitized)
-        findings.append("email")
-        modified = True
-    if redact_phone and PHONE_RE.search(sanitized):
-        sanitized = PHONE_RE.sub("[PHONE REDACTED]", sanitized)
-        findings.append("phone")
-        modified = True
+    try:
+        pii_results = _presidio_analyzer.analyze(text=sanitized, language="en")
+        if not redact_phone:
+            pii_results = [r for r in pii_results if r.entity_type != "PHONE_NUMBER"]
+        if pii_results:
+            sanitized = _presidio_anonymizer.anonymize(
+                text=sanitized, analyzer_results=pii_results
+            ).text
+            found_types = sorted({r.entity_type for r in pii_results})
+            findings.extend(f"pii:{t}" for t in found_types)
+            modified = True
+    except Exception:
+        # Presidio failure → fall back to the regex email guard so we never skip PII checks.
+        if EMAIL_RE.search(sanitized):
+            sanitized = EMAIL_RE.sub("[EMAIL REDACTED]", sanitized)
+            findings.append("pii:EMAIL_ADDRESS")
+            modified = True
 
     return sanitized, modified, findings
 
