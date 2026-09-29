@@ -34,6 +34,7 @@ import httpx
 from dotenv import load_dotenv, find_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
+from pydantic import BaseModel
 
 load_dotenv(find_dotenv())
 
@@ -101,6 +102,13 @@ async def fetch_final_answer(client: httpx.AsyncClient, base_url: str, thread_id
 
 
 # --- LLM-AS-JUDGE ---
+
+class JudgeScore(BaseModel):
+    faithfulness: int
+    faithfulness_reason: str
+    relevance: int
+    relevance_reason: str
+
 JUDGE_SYSTEM = """You are a strict evaluation judge for an AI market-analyst agent.
 You are given a QUESTION, a REFERENCE describing the ideal answer, and the agent's ACTUAL answer.
 Score the ACTUAL answer on two axes from 1 to 5.
@@ -114,31 +122,11 @@ faithfulness (1-5): Is every specific claim supported by the reference?
 relevance (1-5): Does the answer address the specific intent of the question?
   5 = directly and completely answers what was asked.
   3 = partially on-topic or padded with irrelevant content.
-  1 = off-topic or non-responsive.
-
-Respond with ONLY a JSON object, no prose, no markdown fences:
-{"faithfulness": <int>, "faithfulness_reason": "<short>", "relevance": <int>, "relevance_reason": "<short>"}"""
-
-
-def parse_json_lenient(text: str):
-    if text is None:
-        return None
-    t = text.strip()
-    t = re.sub(r"^```(?:json)?", "", t).strip()
-    t = re.sub(r"```$", "", t).strip()
-    try:
-        return json.loads(t)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", t, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except json.JSONDecodeError:
-                return None
-    return None
+  1 = off-topic or non-responsive."""
 
 
 async def judge(llm: ChatGroq, case: dict, answer: str, retries: int = 2):
+    structured_llm = llm.with_structured_output(JudgeScore)
     user = (
         f"QUESTION:\n{case['question']}\n\n"
         f"REFERENCE (ideal answer):\n{case['reference']}\n\n"
@@ -147,15 +135,15 @@ async def judge(llm: ChatGroq, case: dict, answer: str, retries: int = 2):
     delay = 5
     for attempt in range(retries + 1):
         try:
-            resp = await llm.ainvoke([SystemMessage(content=JUDGE_SYSTEM), HumanMessage(content=user)])
-            parsed = parse_json_lenient(resp.content if isinstance(resp.content, str) else str(resp.content))
-            if parsed and "faithfulness" in parsed and "relevance" in parsed:
-                return {
-                    "faithfulness": int(parsed["faithfulness"]),
-                    "faithfulness_reason": str(parsed.get("faithfulness_reason", "")),
-                    "relevance": int(parsed["relevance"]),
-                    "relevance_reason": str(parsed.get("relevance_reason", "")),
-                }
+            result: JudgeScore = await structured_llm.ainvoke(
+                [SystemMessage(content=JUDGE_SYSTEM), HumanMessage(content=user)]
+            )
+            return {
+                "faithfulness": result.faithfulness,
+                "faithfulness_reason": result.faithfulness_reason,
+                "relevance": result.relevance,
+                "relevance_reason": result.relevance_reason,
+            }
         except Exception as e:
             if attempt < retries:
                 print(f"  [warn] judge error ({e}); retrying in {delay}s")

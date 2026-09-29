@@ -30,6 +30,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
@@ -254,14 +255,44 @@ async def generate_answer(llm, question: str, contexts: list) -> str:
 # ── Generation Metrics (LLM-as-Judge, single combined call) ───────────────────
 # All 4 metrics are scored in ONE LLM call per question to stay within the
 # free-tier rate limit (5 requests/minute for gemini-3.6-flash).
-# The video explains: an LLM evaluating another LLM's output is faster than
-# human review and gives a solid baseline — just don't rely on it 100%.
+# with_structured_output() guarantees the LLM returns valid floats — no regex
+# parsing, no fallback 0.5 defaults from parse failures.
+
+class GenerationScores(BaseModel):
+    faithfulness:      float = Field(ge=0.0, le=1.0, description="Answer grounded in context")
+    answer_relevancy:  float = Field(ge=0.0, le=1.0, description="Answer addresses the question")
+    context_precision: float = Field(ge=0.0, le=1.0, description="Fraction of chunks that are useful")
+    context_recall:    float = Field(ge=0.0, le=1.0, description="Context covers the ground truth")
+
+
+async def _invoke_structured(structured_llm, messages: list) -> GenerationScores:
+    """Call a structured-output LLM with automatic retry on 429 rate limits."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return await structured_llm.ainvoke(messages)
+        except Exception as exc:
+            msg = str(exc)
+            if "429" not in msg and "RESOURCE_EXHAUSTED" not in msg:
+                raise
+            m = re.search(r"retryDelay.*?(\d+)s", msg)
+            delay = int(m.group(1)) if m else 60
+            if delay > MAX_RETRY_SLEEP:
+                raise RuntimeError(
+                    f"Daily quota exhausted (retry delay {delay}s). "
+                    "Generation metrics will be skipped. "
+                    "Reset time: midnight Pacific. Re-run tomorrow or use a paid API key."
+                ) from exc
+            wait = delay + 5
+            print(f"  [429] rate limited — sleeping {wait}s (attempt {attempt}/{MAX_RETRIES})...")
+            await asyncio.sleep(wait)
+    raise RuntimeError("Max retries exceeded on rate limit")
+
 
 async def score_all_generation_metrics(
     llm, question: str, reference: str, contexts: list, answer: str
 ) -> dict:
     """
-    Scores all 4 generation metrics in a single LLM call:
+    Scores all 4 generation metrics in a single LLM call using structured output:
       Faithfulness      — answer is grounded in context (no hallucination)
       Answer Relevancy  — answer addresses the question
       Context Precision — retrieved chunks are useful (not noisy)
@@ -274,23 +305,19 @@ async def score_all_generation_metrics(
                 "context_precision": 0.0, "context_recall": 0.0}
 
     numbered = "\n\n".join(f"[Chunk {i+1}]: {c}" for i, c in enumerate(contexts))
+    structured_llm = llm.with_structured_output(GenerationScores)
 
-    text = await _invoke(llm, [
+    result: GenerationScores = await _invoke_structured(structured_llm, [
         SystemMessage(content=(
             "You are a strict RAG evaluator. Score exactly 4 metrics from 0.0 to 1.0.\n\n"
-            "FAITHFULNESS: Every claim in ANSWER is directly supported by CONTEXT.\n"
+            "faithfulness: Every claim in ANSWER is directly supported by CONTEXT.\n"
             "  1.0 = fully grounded  |  0.5 = partially  |  0.0 = hallucination\n\n"
-            "ANSWER_RELEVANCY: ANSWER directly addresses QUESTION.\n"
+            "answer_relevancy: ANSWER directly addresses QUESTION.\n"
             "  1.0 = fully on-topic  |  0.5 = partially  |  0.0 = off-topic\n\n"
-            "CONTEXT_PRECISION: Fraction of retrieved CHUNKS actually useful for the QUESTION.\n"
+            "context_precision: Fraction of retrieved CHUNKS actually useful for the QUESTION.\n"
             "  1.0 = all chunks useful  |  0.5 = half useful  |  0.0 = all noise\n\n"
-            "CONTEXT_RECALL: CONTEXT contains all information needed to produce GROUND_TRUTH.\n"
-            "  1.0 = fully covered  |  0.5 = partially  |  0.0 = critical info missing\n\n"
-            "Reply in this EXACT format (no other text):\n"
-            "FAITHFULNESS: <score>\n"
-            "ANSWER_RELEVANCY: <score>\n"
-            "CONTEXT_PRECISION: <score>\n"
-            "CONTEXT_RECALL: <score>"
+            "context_recall: CONTEXT contains all information needed to produce GROUND_TRUTH.\n"
+            "  1.0 = fully covered  |  0.5 = partially  |  0.0 = critical info missing"
         )),
         HumanMessage(content=(
             f"QUESTION: {question}\n\n"
@@ -300,20 +327,11 @@ async def score_all_generation_metrics(
         )),
     ])
 
-    scores: dict = {}
-    for line in text.strip().splitlines():
-        if ":" in line:
-            key, _, val = line.partition(":")
-            try:
-                scores[key.strip().lower()] = min(1.0, max(0.0, float(val.strip())))
-            except ValueError:
-                pass
-
     return {
-        "faithfulness":      scores.get("faithfulness", 0.5),
-        "answer_relevancy":  scores.get("answer_relevancy", 0.5),
-        "context_precision": scores.get("context_precision", 0.5),
-        "context_recall":    scores.get("context_recall", 0.5),
+        "faithfulness":      result.faithfulness,
+        "answer_relevancy":  result.answer_relevancy,
+        "context_precision": result.context_precision,
+        "context_recall":    result.context_recall,
     }
 
 
