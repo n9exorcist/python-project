@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px;
+    background: #0a0d14;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    padding: 36px 40px 32px 40px;
+  }
+
+  /* ── TOP BRAND BAR ── */
+  .brand-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #1e2535;
+  }
+  .brand-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #4aa8d8;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .brand-sub {
+    font-size: 11px;
+    color: #4a5568;
+    margin-top: 3px;
+    letter-spacing: 0.5px;
+  }
+  .brand-name {
+    font-size: 12px;
+    color: #4a5568;
+    text-align: right;
+  }
+  .brand-name strong { color: #718096; }
+
+  /* ── SECTION LABELS ── */
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+  .label-ingest  { color: #4aa8d8; background: #0d1e30; }
+  .label-query   { color: #9b7de8; background: #15102a; }
+
+  /* ── SECTION WRAPPERS ── */
+  .section {
+    border-radius: 10px;
+    padding: 20px 20px 16px;
+    margin-bottom: 16px;
+  }
+  .section-ingest { background: #0f1520; border: 1px solid #1a3a56; }
+  .section-query  { background: #0f0d1e; border: 1px solid #2d1f5a; }
+
+  /* ── STEP CARDS ── */
+  .steps-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 14px;
+    align-items: stretch;
+  }
+  .step {
+    flex: 1;
+    background: #131a24;
+    border-radius: 8px;
+    padding: 14px;
+    border: 1px solid #1e3048;
+  }
+  .step-query {
+    flex: 1;
+    background: #110e20;
+    border-radius: 8px;
+    padding: 14px;
+    border: 1px solid #2a1f4a;
+  }
+  .step-num {
+    font-size: 10px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .num-blue   { color: #4aa8d8; }
+  .num-purple { color: #9b7de8; }
+  .num-green  { color: #68d391; }
+
+  .step-title {
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .t-blue   { color: #4aa8d8; }
+  .t-purple { color: #9b7de8; }
+
+  .step-line { height: 1px; background: #1e2a3a; margin: 8px 0; }
+  .step-line-p { height: 1px; background: #1e1a3a; margin: 8px 0; }
+
+  .tag {
+    display: inline-block;
+    font-size: 9px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    margin: 2px 2px 2px 0;
+    font-weight: 600;
+  }
+  .tag-b { background: #0a2040; color: #4aa8d8; }
+  .tag-y { background: #2a2000; color: #f6c343; }
+  .tag-p { background: #1a0f35; color: #b794f4; }
+  .tag-g { background: #0a2a18; color: #68d391; }
+
+  p { font-size: 10px; color: #a0aec0; line-height: 1.55; margin: 3px 0; }
+  small { font-size: 9px; color: #4a5568; display: block; margin-top: 2px; }
+
+  /* ── ARROW CONNECTOR ── */
+  .arrow-right {
+    display: flex;
+    align-items: center;
+    color: #2d5a7a;
+    font-size: 18px;
+    flex-shrink: 0;
+    margin-top: -4px;
+  }
+  .arrow-right-p {
+    display: flex;
+    align-items: center;
+    color: #4a2d7a;
+    font-size: 18px;
+    flex-shrink: 0;
+    margin-top: -4px;
+  }
+
+  /* ── INFO BOXES ── */
+  .info-row { display: flex; gap: 12px; margin-top: 4px; }
+  .info-box {
+    flex: 1;
+    background: #090e17;
+    border: 1px dashed #1a3048;
+    border-radius: 7px;
+    padding: 12px 14px;
+  }
+  .info-box-p {
+    flex: 1;
+    background: #09070f;
+    border: 1px dashed #2a1a4a;
+    border-radius: 7px;
+    padding: 12px 14px;
+  }
+  .info-title {
+    font-size: 10px;
+    font-weight: 700;
+    margin-bottom: 7px;
+  }
+  .it-blue   { color: #4aa8d8; }
+  .it-purple { color: #9b7de8; }
+
+  /* ── PROVENANCE STRIP ── */
+  .prov-strip {
+    background: #090e17;
+    border: 1px dashed #1a3048;
+    border-radius: 7px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+  }
+  .prov-strip p { font-size: 9.5px; }
+
+  /* ── LLM ANSWER BAR ── */
+  .llm-bar {
+    background: #0a1a0f;
+    border: 1px solid #2a5a38;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-top: 14px;
+    text-align: center;
+  }
+  .llm-title { font-size: 12px; font-weight: 700; color: #68d391; margin-bottom: 5px; }
+
+  /* ── DIVIDER ── */
+  .divider {
+    text-align: center;
+    color: #2d3748;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    margin: 4px 0 14px;
+    position: relative;
+  }
+  .divider::before, .divider::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 42%;
+    height: 1px;
+    background: #1a2030;
+  }
+  .divider::before { left: 0; }
+  .divider::after  { right: 0; }
+
+  /* ── BOTTOM TAGS ── */
+  .footer {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #1a2030;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .hashtags { font-size: 10px; color: #2d6a9f; line-height: 1.8; }
+  .stack-tags { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .stag {
+    font-size: 9px;
+    padding: 3px 9px;
+    border-radius: 4px;
+    font-weight: 600;
+    background: #0f1a28;
+    color: #4aa8d8;
+    border: 1px solid #1a3a56;
+  }
+</style>
+</head>
+<body>
+
+<!-- BRAND BAR -->
+<div class="brand-bar">
+  <div>
+    <div class="brand-title">RAG Pipeline — From Documents to AI Answers</div>
+    <div class="brand-sub">LangChain · LangGraph · FAISS · Gemini Embeddings · Hybrid Search</div>
+  </div>
+  <div class="brand-name">
+    <strong>Narayanan Selvaraj</strong><br>
+    Team Lead · Full-Stack LLM &amp; GenAI
+  </div>
+</div>
+
+<!-- ═══ INGESTION SECTION ═══ -->
+<div class="section section-ingest">
+  <span class="section-label label-ingest">① INGESTION &nbsp;·&nbsp; run ingest.py once per document update</span>
+
+  <div class="steps-row">
+
+    <!-- Step 1 -->
+    <div class="step">
+      <div class="step-num num-blue">STEP 1</div>
+      <div class="step-title t-blue">DATA SOURCES</div>
+      <div class="step-line"></div>
+      <p>📄 PDF → PyPDFLoader</p>
+      <p>📊 CSV → CSVLoader</p>
+      <p>✏️ Manual knowledge texts</p>
+      <small>8 hardcoded domain facts</small>
+    </div>
+
+    <div class="arrow-right">›</div>
+
+    <!-- Step 2 -->
+    <div class="step">
+      <div class="step-num num-blue">STEP 2</div>
+      <div class="step-title t-blue">SMART CHUNKING</div>
+      <div class="step-line"></div>
+      <p>RecursiveCharacterTextSplitter</p>
+      <div style="margin-top:6px">
+        <span class="tag tag-g">FAQ → 300 chars</span><br>
+        <span class="tag tag-b">Technical → 1000 chars</span><br>
+        <span class="tag tag-y">Legal → 2500 chars</span>
+      </div>
+      <small>Category detected from filename</small>
+    </div>
+
+    <div class="arrow-right">›</div>
+
+    <!-- Step 3 -->
+    <div class="step">
+      <div class="step-num num-blue">STEP 3</div>
+      <div class="step-title t-blue">EMBEDDING</div>
+      <div class="step-line"></div>
+      <p>Gemini embedding-001</p>
+      <p>text → 768-dim float vector</p>
+      <div style="margin-top:6px">
+        <span class="tag tag-b">Batch of 10 chunks</span><br>
+        <span class="tag tag-y">75s pause (rate limit)</span>
+      </div>
+    </div>
+
+    <div class="arrow-right">›</div>
+
+    <!-- Step 4 -->
+    <div class="step">
+      <div class="step-num num-blue">STEP 4</div>
+      <div class="step-title t-blue">FAISS INDEX</div>
+      <div class="step-line"></div>
+      <p>FAISS.from_documents()</p>
+      <p>vector_db.add_documents()</p>
+      <div style="margin-top:6px">
+        <span class="tag tag-b">faiss_index/index.faiss</span><br>
+        <span class="tag tag-b">faiss_index/index.pkl</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Provenance strip -->
+  <div class="prov-strip">
+    <span class="info-title it-blue">PROVENANCE METADATA — stamped on every chunk &amp; stored in FAISS</span>
+    <p style="margin-top:5px">
+      <span class="tag tag-b">source: accentures-q2-fy26.pdf</span>
+      <span class="tag tag-b">doc_version: sha256 (12 chars)</span>
+      <span class="tag tag-b">doc_type: pdf | csv | manual</span>
+      <span class="tag tag-b">chunk_category: technical</span>
+      <span class="tag tag-y">ingested_at: 2026-09-30T…</span>
+      <span class="tag tag-y">STALE flag if &gt; 90 days old</span>
+    </p>
+  </div>
+
+  <!-- Embedding + Rate limit boxes -->
+  <div class="info-row">
+    <div class="info-box">
+      <div class="info-title it-blue">WHAT EMBEDDING DOES</div>
+      <p>"Accenture Q2 FY26 revenues reached $18B"</p>
+      <p style="color:#4a5568">↓ Gemini converts text to a high-dimensional vector</p>
+      <p style="color:#f6c343">[0.023, -0.147, 0.891, 0.042 …] (768 dimensions)</p>
+      <p style="margin-top:4px">Similar meaning → vectors close in space</p>
+      <p>"What is Accenture's revenue?" → similar vector ✓</p>
+      <p>"Chocolate cake recipe" → very different vector ✗</p>
+    </div>
+    <div class="info-box">
+      <div class="info-title it-blue">RATE LIMIT HANDLING</div>
+      <p>Gemini free tier: 1000 embed requests / day</p>
+      <p>→ embed 10 chunks → wait 75s → repeat</p>
+      <p>→ on 429: exponential backoff (10s → 20s → 40s…)</p>
+      <p style="margin-top:4px">Large listing CSVs excluded from FAISS</p>
+      <p>Use direct lookup tools for stock universe data</p>
+      <p style="color:#f6c343; margin-top:4px">~314 chunks → fits within daily quota ✓</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- DIVIDER -->
+<div class="divider">RUNTIME — per user query</div>
+
+<!-- ═══ QUERY SECTION ═══ -->
+<div class="section section-query">
+  <span class="section-label label-query">② QUERY FLOW &nbsp;·&nbsp; every time a user sends a message</span>
+
+  <div class="steps-row">
+
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 1</div>
+      <div class="step-title t-purple">USER QUERY</div>
+      <div class="step-line-p"></div>
+      <p>"What were Accenture Q2 revenues?"</p>
+    </div>
+
+    <div class="arrow-right-p">›</div>
+
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 2</div>
+      <div class="step-title t-purple">EMBED QUERY</div>
+      <div class="step-line-p"></div>
+      <p>Same Gemini model</p>
+      <p>text → query vector</p>
+    </div>
+
+    <div class="arrow-right-p">›</div>
+
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 3</div>
+      <div class="step-title t-purple">HYBRID SEARCH</div>
+      <div class="step-line-p"></div>
+      <p><span class="tag tag-p">FAISS</span> semantic similarity</p>
+      <p><span class="tag tag-p">BM25</span> keyword matching</p>
+      <p style="color:#f6c343; margin-top:4px">Reciprocal Rank Fusion merge</p>
+    </div>
+
+    <div class="arrow-right-p">›</div>
+
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 4</div>
+      <div class="step-title t-purple">FILTER &amp; RETURN</div>
+      <div class="step-line-p"></div>
+      <p>Drop chunks with dist &gt; 0.65</p>
+      <p>Return text + provenance</p>
+      <small>"No records found" if all dropped</small>
+    </div>
+
+  </div>
+
+  <div class="info-row">
+    <div class="info-box-p">
+      <div class="info-title it-purple">HOW FAISS FINDS SIMILAR CHUNKS</div>
+      <p>Query vector: [0.019, -0.142, 0.887, …]</p>
+      <p style="color:#4a5568; margin:3px 0">↓ L2 distance to every stored chunk vector</p>
+      <p>Chunk A "Accenture revenues $18B" → dist 0.34 ✅</p>
+      <p>Chunk B "Accenture bookings $22.1B" → dist 0.41 ✅</p>
+      <p>Chunk C "Gold is safe-haven asset" → dist 0.87 ❌</p>
+      <p style="color:#f6c343; margin-top:4px">Threshold 0.65: keeps relevant, drops noise</p>
+    </div>
+    <div class="info-box-p">
+      <div class="info-title it-purple">WHY HYBRID SEARCH?</div>
+      <p><span class="tag tag-p">Semantic</span> finds meaning even with different words</p>
+      <p style="margin-top:3px">"revenue" matches "earnings" — no exact word needed</p>
+      <p style="margin-top:6px"><span class="tag tag-p">BM25 Keyword</span> catches exact terms semantic misses</p>
+      <p style="margin-top:3px">Ticker symbols, names, figures like "$18.0B"</p>
+      <p style="color:#f6c343; margin-top:6px">RRF: docs scoring well in both lists rank highest</p>
+    </div>
+  </div>
+
+  <!-- LLM answer bar -->
+  <div class="llm-bar">
+    <div class="llm-title">⑤ LLM (Groq) GENERATES ANSWER — grounded in retrieved chunks</div>
+    <p style="color:#a0c4a0; font-size:10.5px">"Accenture's Q2 FY26 revenues were $18.0 billion, an 8% increase. [Source: accentures-second-quarter-fiscal-2026-earnings-press-release.pdf]"</p>
+  </div>
+
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="hashtags">
+    #GenerativeAI &nbsp; #LangChain &nbsp; #RAG &nbsp; #VectorDatabase &nbsp; #LLM<br>
+    #FAISS &nbsp; #HybridSearch &nbsp; #AIEngineering &nbsp; #MachineLearning &nbsp; #Accenture
+  </div>
+  <div class="stack-tags">
+    <span class="stag">LangChain</span>
+    <span class="stag">LangGraph</span>
+    <span class="stag">FAISS</span>
+    <span class="stag">Gemini Embeddings</span>
+    <span class="stag">BM25</span>
+    <span class="stag">FastAPI</span>
+    <span class="stag">Python</span>
+  </div>
+</div>
+
+</body>
+</html>
