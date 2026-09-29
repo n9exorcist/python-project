@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP, Context
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_community.retrievers import BM25Retriever
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 
@@ -49,10 +50,17 @@ if FAISS_PATH:
         allow_dangerous_deserialization=True
     )
     retriever = vector_db.as_retriever(search_kwargs={"k": 5})
+    # BM25 is built from the same docs already in FAISS — no extra ingestion needed.
+    # It runs in memory at query time and excels at exact keyword matches (ticker
+    # symbols, names, figures like "$18.0B") that semantic search can miss.
+    _all_docs = list(vector_db.docstore._dict.values())
+    bm25_retriever = BM25Retriever.from_documents(_all_docs, k=5)
+    print(f"--- BM25 index built from {len(_all_docs)} chunks ---")
 else:
     print(f"--- WARNING: FAISS index not found in {_faiss_candidates} ---")
     vector_db = None
     retriever = None
+    bm25_retriever = None
 
 # A nearest neighbour is not the same thing as a relevant one. FAISS always
 # returns k results, however far away they are, so "top 5" used to mean "the
@@ -200,6 +208,27 @@ def mcp_read_market_cycles() -> str:
 
 
 # --- CORPORATE RECORDS (RAG) TOOL ---
+def _rrf_merge(semantic: list, keyword: list, rrf_k: int = 60, top_n: int = 5) -> list:
+    """Reciprocal Rank Fusion — merges two ranked doc lists into one.
+
+    Each doc earns 1/(rank + rrf_k) from every list it appears in.
+    Docs that rank well in both lists float to the top; docs from only
+    one list still appear but score lower. rrf_k=60 is the standard default.
+    """
+    scores: dict[str, float] = {}
+    docs_by_key: dict[str, object] = {}
+    for rank, doc in enumerate(semantic):
+        key = doc.page_content[:120]
+        scores[key] = scores.get(key, 0.0) + 1.0 / (rank + 1 + rrf_k)
+        docs_by_key[key] = doc
+    for rank, doc in enumerate(keyword):
+        key = doc.page_content[:120]
+        scores[key] = scores.get(key, 0.0) + 1.0 / (rank + 1 + rrf_k)
+        docs_by_key[key] = doc
+    ranked_keys = sorted(scores, key=lambda k: scores[k], reverse=True)
+    return [docs_by_key[k] for k in ranked_keys[:top_n]]
+
+
 def _format_with_provenance(doc, idx: int) -> str:
     """Render a retrieved chunk with its source, version, and age.
 
@@ -245,19 +274,28 @@ def mcp_search_corporate_records(query: str) -> str:
     and how long ago it was indexed. Results marked STALE may be outdated -- say
     so in your answer rather than asserting the figure as current.
     """
-    if not retriever:
+    if not vector_db:
         return "Error: Local FAISS index not found."
     try:
+        # 1. Semantic search — FAISS L2 distance with relevance threshold.
         scored = vector_db.similarity_search_with_score(query, k=5)
-        docs = [d for d, dist in scored if dist <= RETRIEVAL_MAX_DISTANCE]
-        dropped = len(scored) - len(docs)
+        semantic_docs = [d for d, dist in scored if dist <= RETRIEVAL_MAX_DISTANCE]
+        dropped = len(scored) - len(semantic_docs)
         if dropped:
-            print(f"--- [RAG] {query[:40]!r}: kept {len(docs)}, dropped {dropped} "
-                  f"beyond distance {RETRIEVAL_MAX_DISTANCE} ---")
+            print(f"--- [RAG] {query[:40]!r}: semantic kept {len(semantic_docs)}, "
+                  f"dropped {dropped} beyond distance {RETRIEVAL_MAX_DISTANCE} ---")
+
+        # 2. Keyword search — BM25 exact-term matching (great for tickers, names,
+        #    figures like "$18.0B" that semantic search can miss).
+        keyword_docs = bm25_retriever.invoke(query) if bm25_retriever else []
+
+        # 3. Merge with Reciprocal Rank Fusion.
+        docs = _rrf_merge(semantic_docs, keyword_docs, top_n=5)
+
         if not docs:
             return "No local records found."
-        # Provenance is preserved here. The previous version returned page_content
-        # only, discarding metadata entirely -- so answers were unattributable.
+        print(f"--- [RAG hybrid] semantic={len(semantic_docs)} keyword={len(keyword_docs)} "
+              f"merged={len(docs)} ---")
         return "\n\n".join(_format_with_provenance(d, i) for i, d in enumerate(docs, 1))
     except Exception as e:
         return f"Error searching local records: {e}"
