@@ -20,11 +20,20 @@ import os
 import re
 
 from langchain_core.messages import AIMessage
-from presidio_analyzer import AnalyzerEngine
-from presidio_anonymizer import AnonymizerEngine
 
-_presidio_analyzer = AnalyzerEngine()
-_presidio_anonymizer = AnonymizerEngine()
+# Presidio loads a spaCy model (seconds, hundreds of MB). Built lazily so that
+# modules needing only the regexes below -- rag_core.py screens retrieved chunks
+# with INJECTION_RE -- don't pay for it at import time.
+_presidio_engines = None
+
+
+def _presidio():
+    global _presidio_engines
+    if _presidio_engines is None:
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_anonymizer import AnonymizerEngine
+        _presidio_engines = (AnalyzerEngine(), AnonymizerEngine())
+    return _presidio_engines
 
 # ---------------------------------------------------------------------------
 # INPUT-side patterns: instruction override + secret exfiltration
@@ -154,6 +163,7 @@ def scan_output(text: str, redact_phone: bool = False):
     modified = False
     sanitized = text
     try:
+        _presidio_analyzer, _presidio_anonymizer = _presidio()
         pii_results = _presidio_analyzer.analyze(text=sanitized, language="en")
         if not redact_phone:
             pii_results = [r for r in pii_results if r.entity_type != "PHONE_NUMBER"]

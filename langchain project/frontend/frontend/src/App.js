@@ -23,6 +23,7 @@ import {
 } from "./store/chatSlice.js";
 import Home from "./React/Home.js";
 import "./App.css";
+import ReactPractise from "../src/React/reactpractise.js";
 import TaskDashboard from "./features/TaskDashboard.js";
 import TicTacToe from "./features/tictactoe.js";
 import SwingDashboard from "./features/SwingDashboard.js";
@@ -369,7 +370,9 @@ function App() {
 
     const container = messagesContainerRef.current;
     if (!container || messageIndex === undefined) return;
-    const target = container.querySelector(`[data-msg-index="${messageIndex}"]`);
+    const target = container.querySelector(
+      `[data-msg-index="${messageIndex}"]`,
+    );
     if (!target) return;
     // Stop following the stream, or the next token would drag the view straight
     // back to the bottom the reader just navigated away from.
@@ -596,8 +599,9 @@ function App() {
       </div>
       <div>{/* <Home /> */}</div>
       <div>
-        {/* <TaskDashboard />
-        <TicTacToe /> */}
+        <TaskDashboard />
+        {/* <TicTacToe /> */}
+        <ReactPractise />
       </div>
     </>
   );

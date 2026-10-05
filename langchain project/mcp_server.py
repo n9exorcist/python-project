@@ -2,14 +2,15 @@ import os
 import json
 import pandas as pd
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from dotenv import load_dotenv
 
 from mcp.server.fastmcp import FastMCP, Context
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_community.retrievers import BM25Retriever
 from langchain_community.tools.tavily_search import TavilySearchResults
+
+from rag_core import HybridRetriever, format_for_llm
 
 
 load_dotenv()
@@ -17,10 +18,6 @@ load_dotenv()
 # All file paths are anchored to THIS file's directory, not the current working
 # directory, so the server behaves the same no matter where you launch it from.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Chunks indexed longer ago than this are flagged STALE in retrieval output,
-# so the agent can caveat rather than silently assert an outdated figure.
-STALE_AFTER_DAYS = int(os.getenv("STALE_AFTER_DAYS", "90"))
 
 # Initialize FastMCP
 mcp = FastMCP("MarketAnalystPro")
@@ -49,18 +46,18 @@ if FAISS_PATH:
         embeddings,
         allow_dangerous_deserialization=True
     )
-    retriever = vector_db.as_retriever(search_kwargs={"k": 5})
+    # Dense + BM25 + RRF + rerank, with access filtering, caching and citations.
     # BM25 is built from the same docs already in FAISS — no extra ingestion needed.
-    # It runs in memory at query time and excels at exact keyword matches (ticker
-    # symbols, names, figures like "$18.0B") that semantic search can miss.
-    _all_docs = list(vector_db.docstore._dict.values())
-    bm25_retriever = BM25Retriever.from_documents(_all_docs, k=5)
-    print(f"--- BM25 index built from {len(_all_docs)} chunks ---")
+    hybrid_retriever = HybridRetriever(vector_db)
 else:
     print(f"--- WARNING: FAISS index not found in {_faiss_candidates} ---")
     vector_db = None
-    retriever = None
-    bm25_retriever = None
+    hybrid_retriever = None
+
+# Who is asking is a property of the deployment, not of the conversation: a tool
+# argument would let the prompt (or a retrieved document) pick its own tenant.
+RAG_TENANT_ID = os.getenv("RAG_TENANT_ID", "default")
+RAG_ROLES = frozenset(r.strip() for r in os.getenv("RAG_ROLES", "").split(",") if r.strip())
 
 # A nearest neighbour is not the same thing as a relevant one. FAISS always
 # returns k results, however far away they are, so "top 5" used to mean "the
@@ -83,7 +80,9 @@ else:
 # Re-measure if the embedding model or the corpus changes: distances are only
 # comparable within one model, and a threshold tuned on 68 vectors is a
 # starting point for 68,000, not a conclusion.
-RETRIEVAL_MAX_DISTANCE = float(os.getenv("RETRIEVAL_MAX_DISTANCE", "0.65"))
+#
+# The threshold (RETRIEVAL_MAX_DISTANCE env var) and the STALE_AFTER_DAYS flag
+# are applied in rag_core.py.
 
 
 # --- CSV SIGNAL TOOL ---
@@ -208,60 +207,6 @@ def mcp_read_market_cycles() -> str:
 
 
 # --- CORPORATE RECORDS (RAG) TOOL ---
-def _rrf_merge(semantic: list, keyword: list, rrf_k: int = 60, top_n: int = 5) -> list:
-    """Reciprocal Rank Fusion — merges two ranked doc lists into one.
-
-    Each doc earns 1/(rank + rrf_k) from every list it appears in.
-    Docs that rank well in both lists float to the top; docs from only
-    one list still appear but score lower. rrf_k=60 is the standard default.
-    """
-    scores: dict[str, float] = {}
-    docs_by_key: dict[str, object] = {}
-    for rank, doc in enumerate(semantic):
-        key = doc.page_content[:120]
-        scores[key] = scores.get(key, 0.0) + 1.0 / (rank + 1 + rrf_k)
-        docs_by_key[key] = doc
-    for rank, doc in enumerate(keyword):
-        key = doc.page_content[:120]
-        scores[key] = scores.get(key, 0.0) + 1.0 / (rank + 1 + rrf_k)
-        docs_by_key[key] = doc
-    ranked_keys = sorted(scores, key=lambda k: scores[k], reverse=True)
-    return [docs_by_key[k] for k in ranked_keys[:top_n]]
-
-
-def _format_with_provenance(doc, idx: int) -> str:
-    """Render a retrieved chunk with its source, version, and age.
-
-    This is what makes an answer reconstructable later: the provenance travels in
-    the tool result -> ToolMessage -> graph state -> /chat/debug_state.
-    """
-    meta = getattr(doc, "metadata", None) or {}
-    source = meta.get("source", "unknown")
-    version = meta.get("doc_version", "unversioned")
-    page = meta.get("page")
-    ingested = meta.get("ingested_at")
-
-    bits = [f"source: {source}", f"v:{version}"]
-    if page is not None:
-        bits.append(f"p.{page}")
-    if ingested:
-        try:
-            dt = datetime.fromisoformat(ingested)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            days = (datetime.now(timezone.utc) - dt).days
-            age = f"indexed {days}d ago"
-            if days > STALE_AFTER_DAYS:
-                age += " \u00b7 STALE"
-            bits.append(age)
-        except Exception:
-            pass
-
-    header = f"[{idx}] " + " \u00b7 ".join(bits)
-    content = getattr(doc, "page_content", str(doc))
-    return f"{header}\n{content}"
-
-
 @mcp.tool()
 def mcp_search_corporate_records(query: str) -> str:
     """
@@ -270,33 +215,19 @@ def mcp_search_corporate_records(query: str) -> str:
     company facts, earnings figures, bookings, dividends, and named people that
     live in internal documents rather than on the live web.
 
-    Each result is returned with its provenance: source file, document version,
-    and how long ago it was indexed. Results marked STALE may be outdated -- say
-    so in your answer rather than asserting the figure as current.
+    Each result carries a citation (document, page, character range), its
+    version, and how long ago it was indexed. Cite claims with the result's [n].
+    Results marked STALE may be outdated -- say so in your answer rather than
+    asserting the figure as current.
     """
-    if not vector_db:
+    if not hybrid_retriever:
         return "Error: Local FAISS index not found."
     try:
-        # 1. Semantic search — FAISS L2 distance with relevance threshold.
-        scored = vector_db.similarity_search_with_score(query, k=5)
-        semantic_docs = [d for d, dist in scored if dist <= RETRIEVAL_MAX_DISTANCE]
-        dropped = len(scored) - len(semantic_docs)
-        if dropped:
-            print(f"--- [RAG] {query[:40]!r}: semantic kept {len(semantic_docs)}, "
-                  f"dropped {dropped} beyond distance {RETRIEVAL_MAX_DISTANCE} ---")
-
-        # 2. Keyword search — BM25 exact-term matching (great for tickers, names,
-        #    figures like "$18.0B" that semantic search can miss).
-        keyword_docs = bm25_retriever.invoke(query) if bm25_retriever else []
-
-        # 3. Merge with Reciprocal Rank Fusion.
-        docs = _rrf_merge(semantic_docs, keyword_docs, top_n=5)
-
-        if not docs:
-            return "No local records found."
-        print(f"--- [RAG hybrid] semantic={len(semantic_docs)} keyword={len(keyword_docs)} "
-              f"merged={len(docs)} ---")
-        return "\n\n".join(_format_with_provenance(d, i) for i, d in enumerate(docs, 1))
+        result = hybrid_retriever.retrieve(query, RAG_TENANT_ID, RAG_ROLES)
+        print(f"--- [RAG] {query[:40]!r} cached={result.cached} docs={len(result.docs)} "
+              f"reranker={result.reranker} quarantined={result.quarantined} "
+              f"superseded={result.superseded} ms={result.timings_ms} ---")
+        return format_for_llm(result)
     except Exception as e:
         return f"Error searching local records: {e}"
 
