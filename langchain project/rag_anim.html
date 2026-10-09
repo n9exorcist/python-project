@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1080px; height:1080px; background:#070a11; overflow:hidden;
+    font-family:'Segoe UI', system-ui, sans-serif; }
+  #stage { position:relative; width:1080px; height:1080px; }
+
+  .title { position:absolute; top:46px; left:0; width:100%; text-align:center; }
+  .title h1 { font-size:40px; font-weight:800; color:#eef2f7; letter-spacing:0.5px; }
+  .title p  { font-size:19px; color:#6b7890; margin-top:8px; letter-spacing:2px; text-transform:uppercase; }
+
+  .lane-label { position:absolute; font-size:16px; font-weight:800; letter-spacing:3px; }
+  .lane-ingest { color:#3f7ea6; left:60px; top:214px; }
+  .lane-query  { color:#7a63c0; left:60px; top:604px; }
+
+  svg { position:absolute; top:0; left:0; }
+
+  .node {
+    --glow: 0.5;
+    position:absolute; width:168px; min-height:96px; transform:translate(-50%,-50%);
+    border-radius:16px; padding:14px 12px 12px; text-align:center;
+    background:#0e1420; border:1.5px solid var(--bc);
+    box-shadow: 0 0 calc(10px + 26px*var(--glow)) rgba(var(--rgb), calc(0.15 + 0.5*var(--glow)));
+    transition:none;
+  }
+  .node .ico { font-size:30px; line-height:1; }
+  .node .nt  { font-size:18px; font-weight:800; color:#e7edf5; margin-top:7px; letter-spacing:0.3px; }
+  .node .ns  { font-size:12.5px; color:#8794a8; margin-top:3px; line-height:1.3; }
+
+  .n-blue   { --bc:#255d82; --rgb:74,168,216; }
+  .n-teal   { --bc:#1f6b6b; --rgb:52,184,176; }
+  .n-purple { --bc:#4a3a7e; --rgb:155,125,232; }
+  .n-green  { --bc:#2a6b40; --rgb:104,211,145; }
+  .n-hub    { width:190px; min-height:110px; }
+  .n-hub .nt { font-size:20px; }
+
+  .foot { position:absolute; bottom:44px; left:0; width:100%; text-align:center;
+    font-size:17px; color:#4a5568; }
+  .foot b { color:#8595ac; }
+  .badge { position:absolute; bottom:40px; right:56px; font-size:15px; font-weight:700;
+    color:#68d391; background:#0c2a1a; border:1px solid #1f4a30; border-radius:9px; padding:9px 16px; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <div class="title">
+    <h1>How My RAG Pipeline Works</h1>
+    <p>ingest once · retrieve &amp; cite per query</p>
+  </div>
+
+  <div class="lane-label lane-ingest">① INGESTION</div>
+  <div class="lane-label lane-query">② QUERY</div>
+
+  <!-- connectors + pulses -->
+  <svg width="1080" height="1080" id="wires">
+    <defs>
+      <filter id="glow" x="-120%" y="-120%" width="340%" height="340%">
+        <feGaussianBlur stdDeviation="5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <g id="wiregroup" fill="none" stroke-linecap="round">
+      <path class="flow" data-color="#4aa8d8" data-offset="0.00" d="M190,320 L410,320"/>
+      <path class="flow" data-color="#4aa8d8" data-offset="0.10" d="M450,320 L670,320"/>
+      <path class="flow" data-color="#4aa8d8" data-offset="0.20" d="M710,320 C820,320 900,380 905,470"/>
+      <path class="flow" data-color="#34b8b0" data-offset="0.00" d="M905,520 C905,660 650,700 470,700"/>
+      <path class="flow" data-color="#9b7de8" data-offset="0.00" d="M190,700 L410,700"/>
+      <path class="flow" data-color="#9b7de8" data-offset="0.12" d="M510,700 L690,700"/>
+      <path class="flow" data-color="#68d391" data-offset="0.24" d="M790,700 L880,700"/>
+    </g>
+  </svg>
+
+  <!-- nodes -->
+  <div class="node n-blue"   data-ord="0.0" style="left:150px; top:320px;"><div class="ico">📄</div><div class="nt">Documents</div><div class="ns">PDF · CSV · XLSX</div></div>
+  <div class="node n-blue"   data-ord="0.1" style="left:430px; top:320px;"><div class="ico">✂️</div><div class="nt">Chunk + Dedup</div><div class="ns">sized per type</div></div>
+  <div class="node n-blue"   data-ord="0.2" style="left:710px; top:320px;"><div class="ico">🔢</div><div class="nt">Embed</div><div class="ns">Gemini · 3072-d</div></div>
+
+  <div class="node n-teal n-hub" data-ord="0.3" style="left:905px; top:495px;"><div class="ico">🗄️</div><div class="nt">FAISS Index</div><div class="ns">305 vectors · provenance</div></div>
+
+  <div class="node n-purple" data-ord="0.55" style="left:150px; top:700px;"><div class="ico">❓</div><div class="nt">User Query</div><div class="ns">+ access filter</div></div>
+  <div class="node n-purple" data-ord="0.65" style="left:460px; top:700px;"><div class="ico">🔀</div><div class="nt">Hybrid Search</div><div class="ns">FAISS + BM25 · RRF</div></div>
+  <div class="node n-purple" data-ord="0.75" style="left:740px; top:700px;"><div class="ico">🎯</div><div class="nt">Rerank</div><div class="ns">→ top 5</div></div>
+  <div class="node n-green"  data-ord="0.85" style="left:935px; top:700px;"><div class="ico">✅</div><div class="nt">Cited Answer</div><div class="ns">grounded</div></div>
+
+  <div class="foot"><b>Narayanan Selvaraj</b> · Full-Stack LLM &amp; GenAI</div>
+  <div class="badge">LangChain · FAISS · FlashRank</div>
+</div>
+
+<script>
+  const paths = [...document.querySelectorAll('path.flow')];
+  const svg = document.getElementById('wires');
+  const group = document.getElementById('wiregroup');
+  const DOTS = 3;
+  const NS = 'http://www.w3.org/2000/svg';
+
+  paths.forEach(p => {
+    p.setAttribute('stroke', p.dataset.color + '33');   // faint static pipe
+    p.setAttribute('stroke-width', '5');
+    p._len = p.getTotalLength();
+    p._dots = [];
+    for (let i = 0; i < DOTS; i++) {
+      const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('r', '7');
+      c.setAttribute('fill', p.dataset.color);
+      c.setAttribute('filter', 'url(#glow)');
+      group.appendChild(c);
+      p._dots.push(c);
+    }
+  });
+
+  function setFrame(t) {
+    paths.forEach(p => {
+      const off = parseFloat(p.dataset.offset || 0);
+      for (let i = 0; i < DOTS; i++) {
+        let u = (t + i / DOTS + off) % 1;
+        const pt = p.getPointAtLength(u * p._len);
+        const c = p._dots[i];
+        c.setAttribute('cx', pt.x);
+        c.setAttribute('cy', pt.y);
+        // fade in at start, out at end so dots appear to flow out of nodes
+        const edge = Math.min(1, Math.min(u, 1 - u) * 6);
+        c.setAttribute('opacity', (0.25 + 0.75 * edge).toFixed(3));
+        c.setAttribute('r', (5 + 3 * edge).toFixed(2));
+      }
+    });
+    document.querySelectorAll('.node').forEach(n => {
+      const ord = parseFloat(n.dataset.ord);
+      const g = 0.5 + 0.5 * Math.sin(2 * Math.PI * (t - ord));
+      n.style.setProperty('--glow', g.toFixed(3));
+    });
+  }
+  window.setFrame = setFrame;
+  setFrame(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #05070c; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+  .slide {
+    width: 1080px; height: 1350px; background: #0a0d14;
+    padding: 70px 72px; position: relative; overflow: hidden;
+  }
+  .slide + .slide { margin-top: 40px; }
+
+  /* kicker + page number */
+  .kicker { font-size: 20px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; }
+  .k-blue { color: #4aa8d8; } .k-purple { color: #9b7de8; } .k-green { color: #68d391; }
+  .pageno { position: absolute; top: 70px; right: 72px; font-size: 20px; color: #3a4556; font-weight: 700; }
+
+  h1 { font-size: 58px; font-weight: 800; color: #eef2f7; line-height: 1.12; margin: 22px 0 10px; letter-spacing: -0.5px; }
+  h2 { font-size: 46px; font-weight: 800; color: #eef2f7; line-height: 1.15; margin: 18px 0 26px; letter-spacing: -0.5px; }
+  .sub { font-size: 24px; color: #8a97ab; line-height: 1.5; margin-bottom: 30px; }
+
+  .rule { height: 3px; width: 90px; border-radius: 3px; margin: 8px 0 30px; }
+  .r-blue { background: #4aa8d8; } .r-purple { background: #9b7de8; } .r-green { background: #68d391; }
+
+  /* big list rows */
+  .row { display: flex; align-items: flex-start; gap: 22px; margin-bottom: 22px; }
+  .num {
+    flex-shrink: 0; width: 56px; height: 56px; border-radius: 14px; font-size: 26px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .n-blue   { background: #0d2740; color: #5bb6e4; border: 1px solid #1e4a6e; }
+  .n-purple { background: #1a1038; color: #b794f4; border: 1px solid #3a2a6a; }
+  .n-green  { background: #0c2a1a; color: #68d391; border: 1px solid #1f4a30; }
+  .rtxt { padding-top: 2px; }
+  .rtitle { font-size: 28px; font-weight: 700; color: #e4e9f0; margin-bottom: 4px; }
+  .rdesc { font-size: 21px; color: #92a0b4; line-height: 1.42; }
+  .rdesc b { color: #cdd6e3; font-weight: 600; }
+  .mark { color: #68d391; font-weight: 700; }
+  .mark-p { color: #b794f4; font-weight: 700; }
+
+  /* cards grid (platform) */
+  .cards { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 8px; }
+  .card { width: calc(50% - 10px); background: #0e1a13; border: 1px solid #214a30; border-radius: 16px; padding: 26px 28px; }
+  .card-full { width: 100%; }
+  .ctitle { font-size: 27px; font-weight: 800; color: #68d391; margin-bottom: 12px; letter-spacing: 0.5px; }
+  .cdesc { font-size: 20px; color: #9aa8bc; line-height: 1.45; }
+  .cdesc b { color: #d2dae6; font-weight: 600; }
+
+  /* chips */
+  .chips { margin-top: 26px; }
+  .chip {
+    display: inline-block; font-size: 19px; font-weight: 600; padding: 7px 16px; border-radius: 8px;
+    margin: 0 8px 12px 0;
+  }
+  .c-blue { background: #0d2740; color: #5bb6e4; } .c-purple { background: #1a1038; color: #b794f4; }
+  .c-green { background: #0c2a1a; color: #68d391; } .c-yellow { background: #2a2206; color: #f6c343; }
+
+  /* answer box */
+  .answer { background: #0a1a0f; border: 1px solid #2a5a38; border-radius: 16px; padding: 28px 30px; margin-top: 30px; }
+  .answer .lbl { font-size: 20px; font-weight: 700; color: #68d391; margin-bottom: 10px; letter-spacing: 1px; }
+  .answer p { font-size: 21px; color: #b6cbb8; line-height: 1.5; }
+  .cite { color: #6fae7e; font-size: 18px; }
+
+  /* footer / brand */
+  .brand { position: absolute; left: 72px; bottom: 56px; font-size: 20px; color: #52607a; }
+  .brand b { color: #8595ac; }
+  .swipe { position: absolute; right: 72px; bottom: 56px; font-size: 21px; color: #6a5a9a; font-weight: 700; }
+
+  .big-points .row { margin-bottom: 26px; }
+  .pill { display:inline-block; font-size:17px; font-weight:800; color:#05070c; background:#68d391; border-radius:6px; padding:3px 11px; margin-left:10px; vertical-align:middle; letter-spacing:0.5px;}
+  .tests { display:inline-block; margin-top: 30px; font-size: 22px; font-weight:700; color:#68d391; background:#0c2a1a; border:1px solid #1f4a30; border-radius:10px; padding: 12px 22px;}
+</style>
+</head>
+<body>
+
+<!-- ───────── SLIDE 1 · COVER ───────── -->
+<div class="slide">
+  <div class="kicker k-blue">Generative AI · RAG Engineering</div>
+  <span class="pageno">01</span>
+  <h1>Production RAG,<br>end to end.</h1>
+  <div class="sub">Not a demo. Documents → grounded, <b style="color:#b9c4d4">cited</b> answers —
+  with the retrieval, security and platform layers a real system needs.</div>
+  <div class="rule r-blue"></div>
+
+  <div class="big-points">
+    <div class="row"><div class="num n-blue">✓</div><div class="rtxt">
+      <div class="rtitle">Hybrid retrieval + reranking</div>
+      <div class="rdesc">FAISS semantic + BM25 keyword, fused, then a <b>cross-encoder</b> picks the best 5</div></div></div>
+    <div class="row"><div class="num n-blue">✓</div><div class="rtxt">
+      <div class="rtitle">Multi-tenant access control</div>
+      <div class="rdesc">Permissions filtered <b>before</b> retrieval — identity from the server, never the prompt</div></div></div>
+    <div class="row"><div class="num n-blue">✓</div><div class="rtxt">
+      <div class="rtitle">Trustworthy answers</div>
+      <div class="rdesc">Prompt-injection screening + <b>exact-offset citations</b> on every claim</div></div></div>
+    <div class="row"><div class="num n-blue">✓</div><div class="rtxt">
+      <div class="rtitle">Platform around the core</div>
+      <div class="rdesc">LLM gateway · 4-layer memory · failure recovery · inference batching</div></div></div>
+  </div>
+
+  <div class="tests">63 tests · all offline, no API keys</div>
+  <div class="brand"><b>Narayanan Selvaraj</b> · Team Lead · Full-Stack LLM &amp; GenAI</div>
+  <div class="swipe">swipe →</div>
+</div>
+
+<!-- ───────── SLIDE 2 · INGESTION ───────── -->
+<div class="slide">
+  <div class="kicker k-blue">① Ingestion · build the index</div>
+  <span class="pageno">02</span>
+  <h2>Documents in,<br>a clean index out.</h2>
+  <div class="rule r-blue"></div>
+
+  <div class="row"><div class="num n-blue">1</div><div class="rtxt">
+    <div class="rtitle">Load &amp; deduplicate</div>
+    <div class="rdesc">PDF · CSV · XLSX + manual facts. Identical chunks are <span class="mark">embedded once</span>.</div></div></div>
+
+  <div class="row"><div class="num n-blue">2</div><div class="rtxt">
+    <div class="rtitle">Smart chunking</div>
+    <div class="rdesc">Size tuned per type — FAQ 300 / Technical 1000 / Legal 2500 chars — plus <b>char offsets</b> for citations.</div></div></div>
+
+  <div class="row"><div class="num n-blue">3</div><div class="rtxt">
+    <div class="rtitle">Embed</div>
+    <div class="rdesc">Gemini → <b>3072-dim</b> vectors, batched under the rate limit.</div></div></div>
+
+  <div class="row"><div class="num n-blue">4</div><div class="rtxt">
+    <div class="rtitle">Incremental FAISS sync</div>
+    <div class="rdesc"><span class="mark">Only changed files</span> re-embedded · removed files deleted. No full rebuild.</div></div></div>
+
+  <div class="sub" style="margin-top:34px; margin-bottom:10px; color:#6a7890; font-size:21px">Every chunk is stamped for provenance &amp; access:</div>
+  <div class="chips">
+    <span class="chip c-blue">source</span>
+    <span class="chip c-blue">doc_version</span>
+    <span class="chip c-yellow">ingested_at · STALE flag</span>
+    <span class="chip c-green">chunk_id</span>
+    <span class="chip c-green">char range</span>
+    <span class="chip c-green">content_hash</span>
+    <span class="chip c-purple">tenant_id</span>
+    <span class="chip c-purple">acl</span>
+  </div>
+
+  <div class="brand"><b>Narayanan Selvaraj</b> · Production RAG Pipeline</div>
+  <div class="swipe">swipe →</div>
+</div>
+
+<!-- ───────── SLIDE 3 · QUERY FLOW ───────── -->
+<div class="slide">
+  <div class="kicker k-purple">② Query flow · per user question</div>
+  <span class="pageno">03</span>
+  <h2>Recall first,<br>then precision.</h2>
+  <div class="rule r-purple"></div>
+
+  <div class="row"><div class="num n-purple">1</div><div class="rtxt">
+    <div class="rtitle">Embed query <span class="mark-p">· cached</span></div>
+    <div class="rdesc">Repeated questions skip the embedding call.</div></div></div>
+  <div class="row"><div class="num n-purple">2</div><div class="rtxt">
+    <div class="rtitle">Access filter</div>
+    <div class="rdesc">Tenant + ACL applied <b>before</b> search — a wasteful post-filter becomes a pre-filter.</div></div></div>
+  <div class="row"><div class="num n-purple">3</div><div class="rtxt">
+    <div class="rtitle">Hybrid retrieve</div>
+    <div class="rdesc">Semantic (FAISS) + keyword (BM25), <b>20 candidates each</b>, merged by RRF.</div></div></div>
+  <div class="row"><div class="num n-purple">4</div><div class="rtxt">
+    <div class="rtitle">Screen + resolve</div>
+    <div class="rdesc">Drop prompt-injection chunks · same source in 2 versions → <b>newest wins</b>.</div></div></div>
+  <div class="row"><div class="num n-purple">5</div><div class="rtxt">
+    <div class="rtitle">Rerank → top 5</div>
+    <div class="rdesc"><b>FlashRank</b> cross-encoder rescoring turns 20 candidates into the 5 best.</div></div></div>
+
+  <div class="answer">
+    <div class="lbl">GROUNDED &amp; CITED ANSWER</div>
+    <p>"Accenture's Q2 FY26 revenues were $18.0 billion, an 8% increase.
+    <span class="cite">[cite: accenture-q2-fy26.pdf #p1 : c120-410]</span>"</p>
+  </div>
+
+  <div class="brand"><b>Narayanan Selvaraj</b> · Production RAG Pipeline</div>
+  <div class="swipe">swipe →</div>
+</div>
+
+<!-- ───────── SLIDE 4 · PLATFORM ───────── -->
+<div class="slide">
+  <div class="kicker k-green">③ Production platform layers</div>
+  <span class="pageno">04</span>
+  <h2>The system around<br>the RAG core.</h2>
+  <div class="rule r-green"></div>
+
+  <div class="cards">
+    <div class="card"><div class="ctitle">LLM GATEWAY</div>
+      <div class="cdesc">One entry point: auth → policy → quota → cache → <b>complexity routing</b>. Small model for simple asks, escalate to large on demand. Tracks TTFT/TPS &amp; per-team cost.</div></div>
+    <div class="card"><div class="ctitle">AUTHENTICATION</div>
+      <div class="cdesc">API key → team + roles, keys stored <b>hashed</b>. Identity is fixed server-side and feeds quotas + RAG access control.</div></div>
+    <div class="card"><div class="ctitle">AGENT MEMORY</div>
+      <div class="cdesc">Four layers — <b>working · long-term · shared · episodic</b> — with staleness flags, validation before use, and forgetting.</div></div>
+    <div class="card"><div class="ctitle">RESILIENCE</div>
+      <div class="cdesc">Classify transient vs permanent → retry with backoff · <b>resumable checkpoints</b> · fallback → human handoff. Resume at step 8, not step 1.</div></div>
+    <div class="card card-full"><div class="ctitle">INFERENCE SCALING</div>
+      <div class="cdesc">Dynamic <b>micro-batching</b> keeps the model busy · bounded replica pool · <b>backpressure</b> sheds load instead of queuing unbounded. The throughput ↔ latency trade-off, measured.</div></div>
+  </div>
+
+  <div class="tests">LangChain · FAISS · BM25 · FlashRank · Gemini · 63 tests, all offline</div>
+  <div class="brand"><b>Narayanan Selvaraj</b> · Team Lead · Full-Stack LLM &amp; GenAI</div>
+  <div class="swipe">★ follow for more</div>
+</div>
+
+</body>
+</html>

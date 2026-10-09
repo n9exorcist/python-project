@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px;
+    background: #0a0d14;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    padding: 36px 40px 32px 40px;
+  }
+
+  /* ── TOP BRAND BAR ── */
+  .brand-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid #1e2535;
+  }
+  .brand-title {
+    font-size: 15px; font-weight: 700; color: #4aa8d8;
+    letter-spacing: 1.5px; text-transform: uppercase;
+  }
+  .brand-sub { font-size: 11px; color: #5a6578; margin-top: 4px; letter-spacing: 0.5px; }
+  .brand-name { font-size: 12px; color: #4a5568; text-align: right; }
+  .brand-name strong { color: #718096; }
+
+  /* ── SECTION LABELS ── */
+  .section-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 2px;
+    margin-bottom: 12px; padding: 4px 10px; border-radius: 4px; display: inline-block;
+  }
+  .label-ingest { color: #4aa8d8; background: #0d1e30; }
+  .label-query  { color: #9b7de8; background: #15102a; }
+  .label-prod   { color: #68d391; background: #0b2418; }
+
+  /* ── SECTION WRAPPERS ── */
+  .section { border-radius: 10px; padding: 20px 20px 16px; margin-bottom: 16px; }
+  .section-ingest { background: #0f1520; border: 1px solid #1a3a56; }
+  .section-query  { background: #0f0d1e; border: 1px solid #2d1f5a; }
+  .section-prod   { background: #0b1710; border: 1px solid #1f4a30; }
+
+  /* ── STEP CARDS ── */
+  .steps-row { display: flex; gap: 12px; margin-bottom: 14px; align-items: stretch; }
+  .step, .step-query, .step-prod {
+    flex: 1; border-radius: 8px; padding: 14px;
+  }
+  .step       { background: #131a24; border: 1px solid #1e3048; }
+  .step-query { background: #110e20; border: 1px solid #2a1f4a; }
+  .step-prod  { background: #0e1a13; border: 1px solid #214a30; }
+  .step-green { background: #0a1a0f; border: 1px solid #2a5a38; }
+
+  .step-num { font-size: 10px; font-weight: 700; margin-bottom: 6px; }
+  .num-blue { color: #4aa8d8; } .num-purple { color: #9b7de8; } .num-green { color: #68d391; }
+
+  .step-title { font-size: 11px; font-weight: 700; margin-bottom: 8px; }
+  .t-blue { color: #4aa8d8; } .t-purple { color: #9b7de8; } .t-green { color: #68d391; }
+
+  .step-line   { height: 1px; background: #1e2a3a; margin: 8px 0; }
+  .step-line-p { height: 1px; background: #1e1a3a; margin: 8px 0; }
+  .step-line-g { height: 1px; background: #16351f; margin: 8px 0; }
+
+  .tag {
+    display: inline-block; font-size: 9px; padding: 2px 7px; border-radius: 3px;
+    margin: 2px 2px 2px 0; font-weight: 600;
+  }
+  .tag-b { background: #0a2040; color: #4aa8d8; }
+  .tag-y { background: #2a2000; color: #f6c343; }
+  .tag-p { background: #1a0f35; color: #b794f4; }
+  .tag-g { background: #0a2a18; color: #68d391; }
+  .tag-r { background: #2a0f12; color: #f68080; }
+
+  p { font-size: 10px; color: #a0aec0; line-height: 1.55; margin: 3px 0; }
+  small { font-size: 9px; color: #4a5568; display: block; margin-top: 2px; }
+  .new-pill {
+    font-size: 8px; font-weight: 700; color: #0a0d14; background: #68d391;
+    border-radius: 3px; padding: 1px 5px; margin-left: 5px; letter-spacing: 0.5px;
+    vertical-align: middle;
+  }
+
+  /* ── ARROWS ── */
+  .arrow-right   { display: flex; align-items: center; color: #2d5a7a; font-size: 18px; flex-shrink: 0; margin-top: -4px; }
+  .arrow-right-p { display: flex; align-items: center; color: #4a2d7a; font-size: 18px; flex-shrink: 0; margin-top: -4px; }
+  .arrow-right-g { display: flex; align-items: center; color: #2d7a4a; font-size: 18px; flex-shrink: 0; margin-top: -4px; }
+  .down { text-align: center; color: #4a2d7a; font-size: 16px; margin: -4px 0 8px; }
+
+  /* ── INFO BOXES ── */
+  .info-row { display: flex; gap: 12px; margin-top: 4px; }
+  .info-box   { flex: 1; background: #090e17; border: 1px dashed #1a3048; border-radius: 7px; padding: 12px 14px; }
+  .info-box-p { flex: 1; background: #09070f; border: 1px dashed #2a1a4a; border-radius: 7px; padding: 12px 14px; }
+  .info-title { font-size: 10px; font-weight: 700; margin-bottom: 7px; }
+  .it-blue { color: #4aa8d8; } .it-purple { color: #9b7de8; }
+
+  /* ── PROVENANCE STRIP ── */
+  .prov-strip { background: #090e17; border: 1px dashed #1a3048; border-radius: 7px; padding: 10px 14px; margin-bottom: 14px; }
+  .prov-strip p { font-size: 9.5px; }
+
+  /* ── LLM ANSWER BAR ── */
+  .llm-bar { background: #0a1a0f; border: 1px solid #2a5a38; border-radius: 8px; padding: 14px 18px; margin-top: 14px; text-align: center; }
+  .llm-title { font-size: 12px; font-weight: 700; color: #68d391; margin-bottom: 5px; }
+
+  /* ── DIVIDER ── */
+  .divider {
+    text-align: center; color: #2d3748; font-size: 9px; font-weight: 600;
+    letter-spacing: 2px; margin: 4px 0 14px; position: relative;
+  }
+  .divider::before, .divider::after { content: ''; position: absolute; top: 50%; width: 40%; height: 1px; background: #1a2030; }
+  .divider::before { left: 0; } .divider::after { right: 0; }
+
+  /* ── FOOTER ── */
+  .footer { margin-top: 20px; padding-top: 16px; border-top: 1px solid #1a2030; display: flex; justify-content: space-between; align-items: center; }
+  .hashtags { font-size: 10px; color: #2d6a9f; line-height: 1.8; }
+  .stack-tags { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 620px; }
+  .stag { font-size: 9px; padding: 3px 9px; border-radius: 4px; font-weight: 600; background: #0f1a28; color: #4aa8d8; border: 1px solid #1a3a56; }
+</style>
+</head>
+<body>
+
+<!-- BRAND BAR -->
+<div class="brand-bar">
+  <div>
+    <div class="brand-title">Production RAG Pipeline — Documents to Grounded, Cited Answers</div>
+    <div class="brand-sub">LangChain · FAISS + BM25 Hybrid · FlashRank Rerank · Multi-Tenant Access Control · Exact-Offset Citations · Gemini</div>
+  </div>
+  <div class="brand-name">
+    <strong>Narayanan Selvaraj</strong><br>
+    Team Lead · Full-Stack LLM &amp; GenAI
+  </div>
+</div>
+
+<!-- ═══ INGESTION ═══ -->
+<div class="section section-ingest">
+  <span class="section-label label-ingest">① INGESTION &nbsp;·&nbsp; run ingest.py — incremental: only changed files re-embedded ( --full to rebuild )</span>
+
+  <div class="steps-row">
+    <div class="step">
+      <div class="step-num num-blue">STEP 1</div>
+      <div class="step-title t-blue">DATA SOURCES</div>
+      <div class="step-line"></div>
+      <p>📄 PDF → PyPDFLoader</p>
+      <p>📊 CSV / XLSX loaders</p>
+      <p>✏️ Manual knowledge texts</p>
+      <p style="color:#68d391">⧉ Deduplicated<span class="new-pill">NEW</span></p>
+      <small>identical chunks embedded once</small>
+    </div>
+
+    <div class="arrow-right">›</div>
+
+    <div class="step">
+      <div class="step-num num-blue">STEP 2</div>
+      <div class="step-title t-blue">SMART CHUNKING</div>
+      <div class="step-line"></div>
+      <p>RecursiveCharacterTextSplitter</p>
+      <div style="margin-top:6px">
+        <span class="tag tag-g">FAQ → 300</span>
+        <span class="tag tag-b">Technical → 1000</span>
+        <span class="tag tag-y">Legal → 2500</span>
+      </div>
+      <p style="color:#68d391; margin-top:5px">+ char offsets<span class="new-pill">NEW</span></p>
+      <small>add_start_index → exact citations</small>
+    </div>
+
+    <div class="arrow-right">›</div>
+
+    <div class="step">
+      <div class="step-num num-blue">STEP 3</div>
+      <div class="step-title t-blue">EMBEDDING</div>
+      <div class="step-line"></div>
+      <p>Gemini embedding-001</p>
+      <p>text → <strong style="color:#4aa8d8">3072-dim</strong> float vector</p>
+      <div style="margin-top:6px">
+        <span class="tag tag-b">Batch of 10</span>
+        <span class="tag tag-y">75s pause</span>
+      </div>
+    </div>
+
+    <div class="arrow-right">›</div>
+
+    <div class="step">
+      <div class="step-num num-blue">STEP 4</div>
+      <div class="step-title t-blue">FAISS INDEX</div>
+      <div class="step-line"></div>
+      <p style="color:#68d391">Incremental sync<span class="new-pill">NEW</span></p>
+      <p>add changed · delete removed</p>
+      <div style="margin-top:6px">
+        <span class="tag tag-b">chunk_id = docstore id</span>
+        <span class="tag tag-b">305 vectors</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Provenance strip -->
+  <div class="prov-strip">
+    <span class="info-title it-blue">PROVENANCE &amp; ACCESS METADATA — stamped on every chunk &amp; stored in FAISS</span>
+    <p style="margin-top:5px">
+      <span class="tag tag-b">source</span>
+      <span class="tag tag-b">doc_version: sha256</span>
+      <span class="tag tag-b">doc_type</span>
+      <span class="tag tag-b">chunk_category</span>
+      <span class="tag tag-y">ingested_at · STALE if &gt; 90d</span>
+      <span class="tag tag-g">doc_id</span>
+      <span class="tag tag-g">chunk_id</span>
+      <span class="tag tag-g">char_start / char_end</span>
+      <span class="tag tag-g">content_hash</span>
+      <span class="tag tag-p">tenant_id</span>
+      <span class="tag tag-p">acl</span>
+      <span class="new-pill">6 NEW FIELDS</span>
+    </p>
+  </div>
+
+  <div class="info-row">
+    <div class="info-box">
+      <div class="info-title it-blue">WHAT EMBEDDING DOES</div>
+      <p>"Accenture Q2 FY26 revenues reached $18B"</p>
+      <p style="color:#4a5568">↓ Gemini → high-dimensional vector</p>
+      <p style="color:#f6c343">[0.023, -0.147, 0.891 …] (3072 dimensions)</p>
+      <p style="margin-top:4px">Similar meaning → vectors close in space</p>
+      <p>"What is Accenture's revenue?" → similar ✓</p>
+      <p>"Chocolate cake recipe" → far away ✗</p>
+    </div>
+    <div class="info-box">
+      <div class="info-title it-blue">DEDUP + INCREMENTAL INGEST <span class="new-pill">NEW</span></div>
+      <p>Content hash per chunk → duplicates embedded once</p>
+      <p>Re-run diffs the index: unchanged files skipped,</p>
+      <p>changed files swapped, removed files deleted</p>
+      <p style="margin-top:4px; color:#4a5568">No full re-embed, no wasted quota, no stale rows</p>
+      <p style="color:#f6c343; margin-top:4px">Large listing CSVs excluded → direct lookup tools</p>
+    </div>
+    <div class="info-box">
+      <div class="info-title it-blue">MULTI-TENANT ISOLATION <span class="new-pill">NEW</span></div>
+      <p>Every chunk tagged <span class="tag tag-p">tenant_id</span> + <span class="tag tag-p">acl</span></p>
+      <p>Identity comes from the server, never the prompt</p>
+      <p style="margin-top:4px">Filter applied <strong>before</strong> retrieval —</p>
+      <p>one tenant can never see another's documents</p>
+      <p style="color:#f6c343; margin-top:4px">Per-tenant BM25 partitions too</p>
+    </div>
+  </div>
+</div>
+
+<!-- DIVIDER -->
+<div class="divider">RUNTIME — per user query · &lt; 2s target</div>
+
+<!-- ═══ QUERY FLOW ═══ -->
+<div class="section section-query">
+  <span class="section-label label-query">② QUERY FLOW &nbsp;·&nbsp; 7-stage retrieval: recall first, then precision</span>
+
+  <!-- Row 1 -->
+  <div class="steps-row">
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 1</div>
+      <div class="step-title t-purple">USER QUERY</div>
+      <div class="step-line-p"></div>
+      <p>"What were Accenture Q2 revenues?"</p>
+    </div>
+    <div class="arrow-right-p">›</div>
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 2</div>
+      <div class="step-title t-purple">EMBED QUERY</div>
+      <div class="step-line-p"></div>
+      <p>Same Gemini model → query vector</p>
+      <p style="color:#68d391; margin-top:4px">embedding cached<span class="new-pill">NEW</span></p>
+    </div>
+    <div class="arrow-right-p">›</div>
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 3</div>
+      <div class="step-title t-purple">ACCESS FILTER <span class="new-pill">NEW</span></div>
+      <div class="step-line-p"></div>
+      <p>tenant + ACL applied <strong>before</strong> search</p>
+      <p style="color:#4a5568">pre-filter, not post-hoc drop</p>
+    </div>
+    <div class="arrow-right-p">›</div>
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 4</div>
+      <div class="step-title t-purple">HYBRID RETRIEVE</div>
+      <div class="step-line-p"></div>
+      <p><span class="tag tag-p">FAISS</span> semantic · dist ≤ 0.65</p>
+      <p><span class="tag tag-p">BM25</span> exact keywords</p>
+      <p style="color:#f6c343; margin-top:3px">20 candidates each → RRF merge</p>
+    </div>
+  </div>
+
+  <div class="down">▼</div>
+
+  <!-- Row 2 -->
+  <div class="steps-row">
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 5</div>
+      <div class="step-title t-purple">SCREEN + RESOLVE <span class="new-pill">NEW</span></div>
+      <div class="step-line-p"></div>
+      <p>🛡️ drop prompt-injection chunks</p>
+      <p>same source, 2 versions → newest wins</p>
+    </div>
+    <div class="arrow-right-p">›</div>
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 6</div>
+      <div class="step-title t-purple">RERANK <span class="new-pill">NEW</span></div>
+      <div class="step-line-p"></div>
+      <p><span class="tag tag-p">FlashRank</span> cross-encoder</p>
+      <p>20 candidates → <strong style="color:#b794f4">top 5</strong></p>
+    </div>
+    <div class="arrow-right-p">›</div>
+    <div class="step-query">
+      <div class="step-num num-purple">STEP 7</div>
+      <div class="step-title t-purple">RETURN + CACHE</div>
+      <div class="step-line-p"></div>
+      <p>citations: <span class="tag tag-g">doc_id · page · char range</span></p>
+      <p>chunks wrapped as <strong>untrusted data</strong></p>
+      <p style="color:#68d391; margin-top:3px">result cached · 5-min TTL</p>
+    </div>
+    <div class="arrow-right-g">›</div>
+    <div class="step-green">
+      <div class="step-num num-green">OUTPUT</div>
+      <div class="step-title t-green">LLM ANSWER</div>
+      <div class="step-line-g"></div>
+      <p>grounded ONLY in retrieved chunks</p>
+      <p>every claim carries its citation</p>
+    </div>
+  </div>
+
+  <div class="info-row">
+    <div class="info-box-p">
+      <div class="info-title it-purple">RECALL → PRECISION</div>
+      <p>Hybrid casts a wide net: <strong>20 candidates</strong> each from</p>
+      <p>semantic + keyword search (high recall)</p>
+      <p style="color:#4a5568; margin:3px 0">↓ cross-encoder rescoring</p>
+      <p>Reranker keeps the <strong>5 truly best</strong> (high precision)</p>
+      <p style="color:#f6c343; margin-top:4px">Miss the right doc = fatal; too much noise = bad answers</p>
+    </div>
+    <div class="info-box-p">
+      <div class="info-title it-purple">WHY HYBRID + RERANK?</div>
+      <p><span class="tag tag-p">Semantic</span> "revenue" matches "earnings"</p>
+      <p><span class="tag tag-p">BM25</span> exact tickers, names, "$18.0B", error codes</p>
+      <p><span class="tag tag-p">RRF</span> docs strong in both lists float up</p>
+      <p style="color:#f6c343; margin-top:4px">Rerank fixes RRF's order with true relevance</p>
+    </div>
+    <div class="info-box-p">
+      <div class="info-title it-purple">SECURITY &amp; TRUST <span class="new-pill">NEW</span></div>
+      <p>Retrieved text treated as <strong>data, not instructions</strong></p>
+      <p>Injection-screened &amp; wrapped in &lt;document&gt; tags</p>
+      <p>Tenant / ACL isolation enforced server-side</p>
+      <p style="color:#f6c343; margin-top:4px">Conflicting sources → newest / non-STALE wins</p>
+    </div>
+  </div>
+
+  <div class="llm-bar">
+    <div class="llm-title">GENERATED ANSWER — grounded &amp; cited with exact source location</div>
+    <p style="color:#a0c4a0; font-size:10.5px">"Accenture's Q2 FY26 revenues were $18.0 billion, an 8% increase.
+    [cite: accentures-second-quarter-fiscal-2026-earnings-press-release.pdf@afe56f #p1:c120-410]"</p>
+  </div>
+</div>
+
+<!-- ═══ PRODUCTION LAYERS ═══ -->
+<div class="section section-prod">
+  <span class="section-label label-prod">③ PRODUCTION PLATFORM LAYERS &nbsp;·&nbsp; around the RAG core &nbsp;·&nbsp; 63 tests, all offline</span>
+
+  <div class="steps-row">
+    <div class="step-prod">
+      <div class="step-num num-green">LLM GATEWAY</div>
+      <div class="step-line-g"></div>
+      <p>one entry point for every call</p>
+      <p>auth → policy → quota → cache →</p>
+      <p><strong style="color:#68d391">complexity routing</strong> → provider</p>
+      <p style="margin-top:3px">small model for simple asks,</p>
+      <p>escalate to large on demand</p>
+      <small>+ TTFT / TPS · per-team cost</small>
+    </div>
+    <div class="step-prod">
+      <div class="step-num num-green">AUTHENTICATION</div>
+      <div class="step-line-g"></div>
+      <p>API key → team + roles</p>
+      <p>keys stored <strong>hashed</strong> (sha256)</p>
+      <p>identity fixed server-side,</p>
+      <p>never from the prompt</p>
+      <small>feeds quotas + RAG access control</small>
+    </div>
+    <div class="step-prod">
+      <div class="step-num num-green">AGENT MEMORY</div>
+      <div class="step-line-g"></div>
+      <p>4 layers:</p>
+      <p><span class="tag tag-g">working</span> <span class="tag tag-g">long-term</span></p>
+      <p><span class="tag tag-g">shared</span> <span class="tag tag-g">episodic</span></p>
+      <p style="margin-top:3px">staleness flags · validate</p>
+      <p>before use · forgetting</p>
+      <small>memory = context, not truth</small>
+    </div>
+    <div class="step-prod">
+      <div class="step-num num-green">RESILIENCE</div>
+      <div class="step-line-g"></div>
+      <p>classify <span class="tag tag-r">transient</span> vs <span class="tag tag-r">permanent</span></p>
+      <p>retry w/ backoff (transient only)</p>
+      <p><strong>resumable checkpoints</strong></p>
+      <p>fallback → human handoff</p>
+      <small>resume at step 8, not step 1</small>
+    </div>
+    <div class="step-prod">
+      <div class="step-num num-green">INFERENCE SCALING</div>
+      <div class="step-line-g"></div>
+      <p>dynamic <strong>micro-batching</strong></p>
+      <p>replica pool (bounded)</p>
+      <p><strong>backpressure</strong> — shed, not</p>
+      <p>queue unbounded</p>
+      <small>throughput ↔ latency, measured</small>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="hashtags">
+    #GenerativeAI &nbsp; #RAG &nbsp; #LangChain &nbsp; #VectorDatabase &nbsp; #LLMOps &nbsp; #AIEngineering<br>
+    #Reranking &nbsp; #HybridSearch &nbsp; #MultiTenant &nbsp; #PromptInjection &nbsp; #MachineLearning &nbsp; #Accenture
+  </div>
+  <div class="stack-tags">
+    <span class="stag">LangChain</span>
+    <span class="stag">FAISS</span>
+    <span class="stag">BM25</span>
+    <span class="stag">FlashRank</span>
+    <span class="stag">Gemini</span>
+    <span class="stag">RRF Fusion</span>
+    <span class="stag">Multi-Tenant</span>
+    <span class="stag">LLM Gateway</span>
+    <span class="stag">Agent Memory</span>
+    <span class="stag">FastAPI</span>
+    <span class="stag">Python</span>
+  </div>
+</div>
+
+</body>
+</html>
