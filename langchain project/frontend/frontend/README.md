@@ -161,8 +161,6 @@ Open 4 terminals.
 Terminal 1 — MCP Server
 powershell
 cd "C:\Users\narayanan.selvaraj\python project\langchain project"
-.\venv\Scripts\activate
-python mcp_server.py
 venv\Scripts\python.exe mcp_server.py
 Terminal 2 — FastAPI Backend
 powershell
