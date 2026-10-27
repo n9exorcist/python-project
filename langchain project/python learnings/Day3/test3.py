@@ -1,45 +1,37 @@
+# Write this from memory — no help:
 
-# Question 4 — Remove Duplicate Words
-# Write a function that:
-# 1. Normalizes text (lowercase)
-# 2. Removes punctuation
-# 3. Removes duplicate words
-# 4. Keeps original order
-# 5. Returns cleaned sentence
-
-def normalize(text):
+def firstNonRepeating(text):
+    # lowercase
 
     text = text.lower()
-
-    print(f"text", text)
+    # remove punctuation
 
     context = ""
+    for char in text:
+        if char.isalpha() or char == " ":
+           context += char
     
-
-    for punct in text:
-        if punct.isalpha() or punct == " ":
-            context += punct
     print(f"context", context)
 
-    words = context.split()
+    context = list(context)
 
-    print(f"words", words)
+    print(f"context", context)
 
-    seen = []
-    unique = []
+    # count chars
+    charCount = {}
 
-    for word in words:
-        if word not in seen:
-            seen.append(word)
-            unique.append(word)
+    for char in context:
+        if char in charCount:
+            charCount[char] += 1
         else:
-            print(f"duplicate removed: {word}")    
+            charCount[char] = 1
 
-    print(f"unique:{unique}")
-    print(f"seen:{seen}")
+    for char in context:
+        if charCount[char] == 1:
+           return char
 
-    return " ".join(unique)
+    return None
+        
 
-
-result = normalize("Hello World!")
-print(f"result", result)
+edc = firstNonRepeating("swiss")
+print(f"edc", edc)
