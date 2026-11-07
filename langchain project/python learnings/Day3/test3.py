@@ -1,37 +1,32 @@
-# Write this from memory — no help:
+# Write a function that:
+# - Takes a number
+# - Returns True if prime
+# - Returns False if not prime
 
-def firstNonRepeating(text):
-    # lowercase
+# Prime = only divisible by 1 and itself
+# 2, 3, 5, 7, 11, 13, 17, 19, 23...
 
-    text = text.lower()
-    # remove punctuation
+# Input  : 7   Output: True
+# Input  : 10  Output: False
 
-    context = ""
-    for char in text:
-        if char.isalpha() or char == " ":
-           context += char
-    
-    print(f"context", context)
+# Hint:
+# for i in range(2, number):
+#     if number % i == 0:
+#         ???
 
-    context = list(context)
 
-    print(f"context", context)
+def primeCheck(number):
 
-    # count chars
-    charCount = {}
+    for i in range(2, number):
 
-    for char in context:
-        if char in charCount:
-            charCount[char] += 1
-        else:
-            charCount[char] = 1
+        if number % i == 0:
 
-    for char in context:
-        if charCount[char] == 1:
-           return char
+            return False
 
-    return None
         
 
-edc = firstNonRepeating("swiss")
-print(f"edc", edc)
+    return True
+
+www =  primeCheck(6)   
+
+print(f"ww",www)
